@@ -23,8 +23,9 @@ const world = new THREE.Group(); scene.add(world);
 scene.add(new THREE.HemisphereLight(0xffffff, 0x9299a3, 2.0));
 const light = new THREE.DirectionalLight(0xffffff, 1.5); light.position.set(40, -30, 80); scene.add(light);
 let worker = null, selected = null, modelName = "", pendingName = "", activeFileKey = "", pendingFileKey = "", loadingToken = 0, pendingGroup = null;
-let importedCandidates = [], reviewDecisions = {}, reviewPage = 0;
+let importedCandidates = [], terminals = [], reviewDecisions = {}, projectInputs = {}, reviewPage = 0, demandPage = 0;
 const reviewPageSize = 50;
+const demandPageSize = 30;
 const batches = [], pendingBatches = [], outputLines = [];
 const colors = { pipe: 0x3d78c5, fitting: 0x8292a6, valve: 0xe5a03c, pump: 0x9a66bb, terminal: 0x39a487, meter: 0x35a8b4, other: 0x8993a1 };
 const axis = new THREE.Matrix4().set(1,0,0,0, 0,0,-1,0, 0,1,0,0, 0,0,0,1);
@@ -71,7 +72,7 @@ function discardActive() {
 function commitPending() {
   discardActive();
   world.add(pendingGroup); batches.push(...pendingBatches); pendingBatches.length = 0; pendingGroup = null;
-  modelName = pendingName; activeFileKey = pendingFileKey; pendingFileKey = ""; loadReviewDecisions(activeFileKey); $("fileName").textContent = modelName; host?.postMessage({ type: "modelAccepted" });
+  modelName = pendingName; activeFileKey = pendingFileKey; pendingFileKey = ""; loadReviewDecisions(activeFileKey); loadProjectInputs(activeFileKey); $("fileName").textContent = modelName; host?.postMessage({ type: "modelAccepted" });
 }
 function renderChunk(items, targetBatches = batches, targetGroup = world) {
   const geometries = [], instanceData = [];
@@ -122,11 +123,29 @@ function showProperties(item) {
   const properties = (item.properties ?? []).slice(0, 80);
   const propertyHtml = properties.map(property => "<div><strong>" + escapeHtml(property.set) + " · " + escapeHtml(property.name) + "</strong><span>" + escapeHtml(property.value ?? "sem valor") + (property.sourceUnit ? " " + escapeHtml(property.sourceUnit) : "") + (property.valueType ? " (" + escapeHtml(property.valueType) + ")" : "") + (property.normalizedValue == null ? "" : " · " + property.normalizedValue.toLocaleString("pt-BR", { maximumFractionDigits: 6 }) + " m") + "</span></div>").join("");
   const system = item.systemLabel ? escapeHtml(item.systemLabel) + " · fonte: " + escapeHtml(item.systemSource) : "não informado no IFC";
-  $("properties").innerHTML = "<h3>" + escapeHtml(item.name || item.type) + "</h3><dl><dt>Classe IFC</dt><dd>" + escapeHtml(item.type) + "</dd><dt>GlobalId</dt><dd>" + escapeHtml(item.id ?? "não informado") + "</dd><dt>Express ID</dt><dd>" + item.expressId + "</dd><dt>Pavimento IFC</dt><dd>" + escapeHtml(item.storey ?? "não associado") + "</dd><dt>Rede IFC</dt><dd>" + system + "</dd></dl>" + (properties.length ? "<details class=\"metadata-block\"><summary>Propriedades IFC (" + item.properties.length + ")</summary><div class=\"metadata-list\">" + propertyHtml + (item.properties.length > 80 ? "<div>Mostrando 80 de " + item.properties.length + " propriedades.</div>" : "") + "</div></details>" : "<div class=\"warning\">Sem property sets IFC associados.</div>");
+  const materials = item.materials?.length ? escapeHtml([...new Set(item.materials)].join(", ")) + " · IfcRelAssociatesMaterial" : "não informado por relação de material IFC";
+  $("properties").innerHTML = "<h3>" + escapeHtml(item.name || item.type) + "</h3><dl><dt>Classe IFC</dt><dd>" + escapeHtml(item.type) + "</dd><dt>GlobalId</dt><dd>" + escapeHtml(item.id ?? "não informado") + "</dd><dt>Express ID</dt><dd>" + item.expressId + "</dd><dt>Pavimento IFC</dt><dd>" + escapeHtml(item.storey ?? "não associado") + "</dd><dt>Rede IFC</dt><dd>" + system + "</dd><dt>Material IFC</dt><dd>" + materials + "</dd></dl>" + (properties.length ? "<details class=\"metadata-block\"><summary>Propriedades IFC (" + item.properties.length + ")</summary><div class=\"metadata-list\">" + propertyHtml + (item.properties.length > 80 ? "<div>Mostrando 80 de " + item.properties.length + " propriedades.</div>" : "") + "</div></details>" : "<div class=\"warning\">Sem property sets IFC associados.</div>");
 }
 function loadReviewDecisions(fileKey) {
   try { const saved = JSON.parse(localStorage.getItem("hydros:reviews:" + fileKey) || "{}"); reviewDecisions = saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {}; }
   catch { reviewDecisions = {}; }
+}
+function loadProjectInputs(fileKey) {
+  let saved = {};
+  try { const value = JSON.parse(localStorage.getItem("hydros:inputs:" + fileKey) || "{}"); if (value && typeof value === "object" && !Array.isArray(value)) saved = value; }
+  catch { log("As entradas salvas do projeto não puderam ser lidas; usando campos vazios."); }
+  projectInputs = { ...saved, demands: saved.demands && typeof saved.demands === "object" && !Array.isArray(saved.demands) ? saved.demands : {} };
+  if (["cold", "hot", "feed"].includes(saved.system)) $("system").value = saved.system;
+  $("utilityPressure").value = typeof saved.utilityPressure === "string" ? saved.utilityPressure : "";
+  $("utilityPressureMax").value = typeof saved.utilityPressureMax === "string" ? saved.utilityPressureMax : "";
+  $("destination").value = saved.destination === "direct" ? "direct" : "tank";
+  $("feedFields").hidden = $("system").value !== "feed";
+}
+function saveProjectInputs() {
+  if (!activeFileKey) return;
+  projectInputs = { ...projectInputs, system: $("system").value, utilityPressure: $("utilityPressure").value, utilityPressureMax: $("utilityPressureMax").value, destination: $("destination").value };
+  try { localStorage.setItem("hydros:inputs:" + activeFileKey, JSON.stringify(projectInputs)); }
+  catch { log("Não foi possível salvar as entradas locais deste projeto."); }
 }
 function saveReviewDecisions() {
   try { localStorage.setItem("hydros:reviews:" + activeFileKey, JSON.stringify(reviewDecisions)); }
@@ -135,9 +154,10 @@ function saveReviewDecisions() {
 function renderConnectionReview() {
   const counts = { Confirmada: 0, Rejeitada: 0, Pendente: 0 };
   importedCandidates.forEach(candidate => { const saved = reviewDecisions[candidate.key]; const decision = saved === "Confirmada" || saved === "Rejeitada" ? saved : "Pendente"; counts[decision]++; });
+  const topology = reviewedTopology();
   const pages = Math.ceil(importedCandidates.length / reviewPageSize), start = reviewPage * reviewPageSize;
   $("connectionSummary").className = "summary";
-  $("connectionSummary").innerHTML = "<dl><dt>Candidatos (até 50 mm)</dt><dd>" + importedCandidates.length.toLocaleString("pt-BR") + "</dd><dt>Confirmadas manualmente</dt><dd>" + counts.Confirmada + "</dd><dt>Rejeitadas</dt><dd>" + counts.Rejeitada + "</dd><dt>Pendentes</dt><dd>" + counts.Pendente + "</dd></dl><div class=\"warning\">Cada ligação é uma sugestão geométrica. Confirmar registra sua revisão humana; não habilita cálculos enquanto faltarem critérios e dados obrigatórios.</div>";
+  $("connectionSummary").innerHTML = "<dl><dt>Candidatos (até 50 mm)</dt><dd>" + importedCandidates.length.toLocaleString("pt-BR") + "</dd><dt>Confirmadas manualmente</dt><dd>" + counts.Confirmada + "</dd><dt>Rejeitadas</dt><dd>" + counts.Rejeitada + "</dd><dt>Pendentes</dt><dd>" + counts.Pendente + "</dd><dt>Trechos no grafo revisado</dt><dd>" + topology.pipeCount + "</dd><dt>Extremidades ainda abertas</dt><dd>" + topology.openEnds + "</dd><dt>Redes desconectadas</dt><dd>" + topology.components + "</dd><dt>Terminais ligados</dt><dd>" + topology.connectedTerminals + " / " + terminals.length + "</dd></dl><div class=\"warning\">As ligações continuam sendo sugestões geométricas até confirmação manual. Um grafo sem pontas abertas ainda não substitui a conferência de fonte, vazões, diâmetros e perdas.</div>";
   $("connectionPageLabel").textContent = pages ? (reviewPage + 1) + " / " + pages : "0 / 0";
   $("connectionPrev").disabled = reviewPage === 0; $("connectionNext").disabled = reviewPage + 1 >= pages;
   $("connectionList").innerHTML = importedCandidates.slice(start, start + reviewPageSize).map((candidate, offset) => {
@@ -148,6 +168,46 @@ function renderConnectionReview() {
     const networkWarning = from.system && to.system && from.system !== to.system ? "<div class=\"warning\">Redes IFC distintas: " + escapeHtml(from.system) + " / " + escapeHtml(to.system) + ".</div>" : "";
     return "<article class=\"candidate\"><div class=\"candidate-heading\"><strong>" + fromLabel + " ↔ " + toLabel + "</strong><span class=\"decision " + decision.toLowerCase() + "\">" + decision + "</span></div><div class=\"candidate-detail\">" + candidate.distance_m.toLocaleString("pt-BR", { maximumFractionDigits: 4 }) + " m · " + escapeHtml(candidate.evidence) + "</div>" + networkWarning + "<div class=\"candidate-actions\"><button class=\"btn small\" data-action=\"focus\" data-index=\"" + index + "\">Focar tubo</button><button class=\"btn small\" data-action=\"Confirmada\" data-index=\"" + index + "\">Confirmar</button><button class=\"btn small\" data-action=\"Rejeitada\" data-index=\"" + index + "\">Rejeitar</button></div></article>";
   }).join("") || "<div class=\"summary empty\">Nenhum candidato foi encontrado na tolerância atual, ou a unidade do IFC não é compatível.</div>";
+}
+function reviewedTopology() {
+  const parent = new Map(), find = key => { if (!parent.has(key)) parent.set(key, key); if (parent.get(key) !== key) parent.set(key, find(parent.get(key))); return parent.get(key); };
+  const union = (a, b) => { const x = find(a), y = find(b); if (x !== y) parent.set(y, x); };
+  const pipeKey = (id, end) => "p:" + id + ":" + end, componentKey = id => "c:" + id;
+  const connectedPorts = new Set(), linkedTerminals = new Set();
+  importedCandidates.forEach(candidate => {
+    if (reviewDecisions[candidate.key] !== "Confirmada") return;
+    const from = candidate.from, to = candidate.to, fromKey = pipeKey(from.expressId, from.end);
+    const targetIsPipe = to.type.toLowerCase() === "ifcpipesegment", targetIsTerminal = to.type.toLowerCase() === "ifcsanitaryterminal";
+    const toKey = targetIsPipe ? pipeKey(to.expressId, to.end) : componentKey(to.expressId);
+    union(fromKey, toKey); connectedPorts.add(fromKey);
+    if (targetIsPipe) connectedPorts.add(toKey);
+    if (targetIsTerminal) linkedTerminals.add(to.expressId);
+  });
+  const pipes = batches.flatMap(batch => batch.records).filter(item => item.kind === "pipe" && item.endpoints?.length === 2);
+  const adjacency = new Map();
+  for (const pipe of pipes) {
+    const a = find(pipeKey(pipe.expressId, 0)), b = find(pipeKey(pipe.expressId, 1));
+    if (!adjacency.has(a)) adjacency.set(a, new Set()); if (!adjacency.has(b)) adjacency.set(b, new Set());
+    adjacency.get(a).add(b); adjacency.get(b).add(a);
+  }
+  let components = 0; const seen = new Set();
+  for (const node of adjacency.keys()) if (!seen.has(node)) {
+    components++; const stack = [node]; seen.add(node);
+    while (stack.length) for (const next of adjacency.get(stack.pop())) if (!seen.has(next)) { seen.add(next); stack.push(next); }
+  }
+  return { pipeCount: pipes.length, openEnds: Math.max(0, pipes.length * 2 - connectedPorts.size), components, connectedTerminals: linkedTerminals.size };
+}
+function renderDemandInputs() {
+  const pages = Math.ceil(terminals.length / demandPageSize), start = demandPage * demandPageSize;
+  const filled = terminals.filter(item => String(projectInputs.demands?.[item.expressId]?.flowLps ?? "").trim() !== "").length;
+  $("demandSummary").className = "summary";
+  $("demandSummary").innerHTML = "<dl><dt>Pontos IFC de utilização</dt><dd>" + terminals.length.toLocaleString("pt-BR") + "</dd><dt>Com vazão informada</dt><dd>" + filled.toLocaleString("pt-BR") + "</dd></dl><div class=\"warning\">Informe explicitamente a vazão máxima de projeto de cada ponto e registre sua fonte. Nenhuma simultaneidade é presumida; ainda não inicia cálculo.</div>";
+  $("demandPageLabel").textContent = pages ? (demandPage + 1) + " / " + pages : "0 / 0";
+  $("demandPrev").disabled = demandPage === 0; $("demandNext").disabled = demandPage + 1 >= pages;
+  $("demandList").innerHTML = terminals.slice(start, start + demandPageSize).map(item => {
+    const values = projectInputs.demands?.[item.expressId] ?? {}, identity = String(item.expressId);
+    return "<article class=\"candidate demand-item\"><strong>" + escapeHtml(item.name || item.type) + " · " + escapeHtml(item.storey ?? "pavimento não associado") + " · Express ID " + identity + "</strong>" + (item.systemLabel ? "<div class=\"candidate-detail\">Rede IFC: " + escapeHtml(item.systemLabel) + "</div>" : "") + "<div class=\"demand-fields\"><label>Vazão máx. (L/s)<input type=\"number\" min=\"0\" step=\"any\" data-demand=\"flowLps\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.flowLps ?? "") + "\"></label><label>Pressão requerida (m.c.a.)<input type=\"number\" min=\"0\" step=\"any\" data-demand=\"pressureMca\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.pressureMca ?? "") + "\"></label><label>Fonte dos valores<input type=\"text\" maxlength=\"160\" data-demand=\"source\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.source ?? "") + "\" placeholder=\"Fabricante ou especificação\"></label></div></article>";
+  }).join("") || "<div class=\"summary empty\">Nenhum IfcSanitaryTerminal foi reconhecido neste IFC.</div>";
 }
 function focusElement(expressId) {
   const item = batches.flatMap(batch => batch.records).find(record => record.expressId === expressId);
@@ -194,13 +254,22 @@ $("filter").onchange = () => {
 };
 $("connectionPrev").onclick = () => { reviewPage = Math.max(0, reviewPage - 1); renderConnectionReview(); };
 $("connectionNext").onclick = () => { reviewPage++; renderConnectionReview(); };
+$("demandPrev").onclick = () => { demandPage = Math.max(0, demandPage - 1); renderDemandInputs(); };
+$("demandNext").onclick = () => { demandPage++; renderDemandInputs(); };
+$("demandList").onchange = event => {
+  const input = event.target.closest("input[data-demand]"); if (!input) return;
+  const id = input.dataset.expressId, field = input.dataset.demand;
+  projectInputs.demands[id] = { ...(projectInputs.demands[id] ?? {}), [field]: input.value };
+  saveProjectInputs(); renderDemandInputs();
+};
 $("connectionList").onclick = event => {
   const button = event.target.closest("button[data-action]"); if (!button) return;
   const candidate = importedCandidates[Number(button.dataset.index)]; if (!candidate) return;
   if (button.dataset.action === "focus") focusElement(candidate.from.expressId);
   else { reviewDecisions[candidate.key] = button.dataset.action; saveReviewDecisions(); renderConnectionReview(); }
 };
-$("system").onchange = () => { $("feedFields").hidden = $("system").value !== "feed"; };
+$("system").onchange = () => { $("feedFields").hidden = $("system").value !== "feed"; saveProjectInputs(); };
+$("utilityPressure").onchange = $("utilityPressureMax").onchange = $("destination").onchange = saveProjectInputs;
 document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () => {
   document.querySelectorAll("[data-tab]").forEach(x => x.classList.toggle("active", x === button));
   document.querySelectorAll(".tab-content").forEach(x => x.hidden = x.id !== `tab-${button.dataset.tab}`);
@@ -235,7 +304,7 @@ function startImport(file) {
     if (data.type === "status") { setLoading(true, data.text, data.progress); status(data.text); }
     else if (data.type === "geometry") { renderChunk(data.items, pendingBatches, pendingGroup); }
     else if (data.type === "done") {
-      setLoading(false); commitPending(); importedCandidates = data.candidates; reviewPage = 0; renderSummary(data); renderConnectionReview(); fit(); status(`Importação concluída: ${data.elements.toLocaleString("pt-BR")} elementos.`);
+      setLoading(false); commitPending(); importedCandidates = data.candidates; terminals = data.terminals ?? []; reviewPage = 0; demandPage = 0; renderSummary(data); renderConnectionReview(); renderDemandInputs(); fit(); status(`Importação concluída: ${data.elements.toLocaleString("pt-BR")} elementos.`);
       $("emptyState").hidden = true; log(`Importação concluída: ${data.elements} elementos IFC com geometria.`); worker.terminate(); worker = null;
     }
     else if (data.type === "error") {

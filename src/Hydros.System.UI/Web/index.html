@@ -16,14 +16,15 @@
   <div class="workspace">
     <aside class="side">
       <section class="panel tabs-panel">
-        <nav class="tabs"><button class="tab active" data-tab="projeto">Projeto</button><button class="tab" data-tab="conexoes">Conexões</button><button class="tab" data-tab="bombas">Bombas</button></nav>
+        <nav class="tabs"><button class="tab active" data-tab="projeto">Projeto</button><button class="tab" data-tab="pontos">Pontos</button><button class="tab" data-tab="conexoes">Conexões</button><button class="tab" data-tab="bombas">Bombas</button></nav>
         <div class="tab-content" id="tab-projeto">
           <label class="field">Sistema para dimensionamento<select id="system"><option value="cold">Água fria</option><option value="hot">Água quente</option><option value="feed">Alimentação</option></select></label>
-          <div id="feedFields" hidden><label class="field">Pressão dinâmica da concessionária (m.c.a.)<input id="utilityPressure" type="number" min="0" step="0.1" placeholder="Informar pressão residual"></label><label class="field">Destino<select id="destination"><option value="tank">Reservatório predial</option><option value="direct">Rede direta</option></select></label><p class="hint">Informe a pressão disponível durante a vazão de projeto.</p></div>
+          <div id="feedFields" hidden><label class="field">Pressão dinâmica residual na vazão de projeto (m.c.a.)<input id="utilityPressure" type="number" min="0" step="0.1" placeholder="Informar pressão residual"></label><label class="field">Pressão máxima estática da concessionária (m.c.a.)<input id="utilityPressureMax" type="number" min="0" step="0.1" placeholder="Informar pressão máxima"></label><label class="field">Destino<select id="destination"><option value="tank">Reservatório predial</option><option value="direct">Rede direta</option></select></label><p class="hint">A pressão dinâmica deve corresponder à vazão de projeto. Também informe a pressão máxima estática da fonte.</p></div>
           <div id="projectSummary" class="summary empty">Abra um IFC para inspecionar a rede hidráulica.</div>
           <div id="warnings"></div>
         </div>
         <div class="tab-content" id="tab-conexoes" hidden><div id="connectionSummary" class="summary empty">Abra um IFC para procurar candidatos geométricos de conexão.</div><div id="connectionList"></div><div class="connection-pages"><button id="connectionPrev" class="btn small" disabled>Anterior</button><span id="connectionPageLabel">0 / 0</span><button id="connectionNext" class="btn small" disabled>Próxima</button></div></div>
+        <div class="tab-content" id="tab-pontos" hidden><div id="demandSummary" class="summary empty">Abra um IFC para cadastrar as demandas dos pontos.</div><div id="demandList"></div><div class="connection-pages"><button id="demandPrev" class="btn small" disabled>Anterior</button><span id="demandPageLabel">0 / 0</span><button id="demandNext" class="btn small" disabled>Próxima</button></div></div>
         <div class="tab-content" id="tab-bombas" hidden><div class="summary empty">A seleção de bombas será habilitada após o dimensionamento.</div></div>
       </section>
       <section class="panel properties"><div class="panel-title"><strong>Propriedades</strong><button id="btnClear" class="btn small">Limpar seleção</button></div><div id="properties" class="summary empty">Selecione um elemento no modelo.</div></section>

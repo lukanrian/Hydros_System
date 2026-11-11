@@ -162,7 +162,7 @@ self.onmessage = async ({ data }) => {
         const ifcType = api.GetNameFromTypeCode(type), normalizedType = ifcType.toLowerCase();
         const geometric = normalizedType === "ifcpipesegment" || normalizedType === "ifcpipefitting" || normalizedType === "ifcvalve" || normalizedType === "ifcpump" || normalizedType === "ifcflowmeter" || api.IsIfcElement(type)
           ? readGeometryData(expressId) : { endpoints: null, origin: null };
-        productMetadata.set(expressId, { expressId, globalId, name: value(line?.Name) ?? "", type: ifcType, storey: null, systemLabel: null, systemSource: null, properties: [], endpoints: metresPerUnit == null ? null : geometric.endpoints?.map(point => multiply(point, metresPerUnit)) ?? null, origin: metresPerUnit == null ? null : geometric.origin?.map(component => component * metresPerUnit) ?? null });
+        productMetadata.set(expressId, { expressId, globalId, name: value(line?.Name) ?? "", type: ifcType, storey: null, systemLabel: null, systemSource: null, materials: [], properties: [], endpoints: metresPerUnit == null ? null : geometric.endpoints?.map(point => multiply(point, metresPerUnit)) ?? null, origin: metresPerUnit == null ? null : geometric.origin?.map(component => component * metresPerUnit) ?? null });
       }
     }
     const containmentIds = getIds("IFCRELCONTAINEDINSPATIALSTRUCTURE");
@@ -174,7 +174,7 @@ self.onmessage = async ({ data }) => {
         if (item && !item.storey) item.storey = storey.label;
       }
     }
-    const relevantProperties = new Set(["Nome", "Classe", "Tipo", "Rede", "Aplicação", "Indicação", "Diâmetro", "Diâmetro interno", "Comprimento", "Comprimento máximo", "Fabricante", "Modelo", "Vazão", "Pressão", "K"]);
+    const relevantProperties = new Set(["Nome", "Classe", "Tipo", "Rede", "Aplicação", "Indicação", "Material", "Diâmetro", "Diâmetro interno", "Comprimento", "Comprimento máximo", "Fabricante", "Modelo", "Vazão", "Pressão", "K"]);
     const propertyRelations = getIds("IFCRELDEFINESBYPROPERTIES");
     for (let i = 0; propertyRelations && i < propertyRelations.size(); i++) {
       const relation = api.GetLine(model, propertyRelations.get(i), false);
@@ -190,8 +190,9 @@ self.onmessage = async ({ data }) => {
         const unit = property.Unit ? api.GetLine(model, reference(property.Unit), false) : null;
         const factor = unit ? unitToMetres(api, unit) : metresPerUnit;
         const valueType = nominal?.name ?? (nominal?.type ? api.GetNameFromTypeCode(nominal.type) : null);
-        const normalizedValue = valueType?.toLowerCase() === "ifclengthmeasure" && factor != null && typeof propertyValue === "number" ? propertyValue * factor : null;
-        extracted.push({ set: setName, name: propertyName, value: propertyValue, valueType, sourceUnit: valueType?.toLowerCase() === "ifclengthmeasure" ? unitName(api, unit ?? lengthUnit) : null, normalizedValue, normalizedUnit: normalizedValue == null ? null : "m" });
+        const isLength = /lengthmeasure$/i.test(valueType ?? "");
+        const normalizedValue = isLength && factor != null && typeof propertyValue === "number" ? propertyValue * factor : null;
+        extracted.push({ set: setName, name: propertyName, value: propertyValue, valueType, sourceUnit: isLength ? unitName(api, unit ?? lengthUnit) : null, normalizedValue, normalizedUnit: normalizedValue == null ? null : "m" });
       }
       for (const expressId of relatedProducts) {
         const item = productMetadata.get(expressId);
@@ -200,6 +201,26 @@ self.onmessage = async ({ data }) => {
         if (network && network.value != null) { item.systemLabel = String(network.value); item.systemSource = setName + ".Rede"; }
       }
       if (i && i % 10000 === 0) self.postMessage({ type: "status", text: "Lendo property sets IFC… " + i.toLocaleString("pt-BR") + " relações", progress: 28 + Math.min(10, Math.round(i / propertyRelations.size() * 10)) });
+    }
+    function readMaterialNames(id, seen = new Set()) {
+      if (!id || seen.has(id)) return [];
+      seen.add(id);
+      const material = api.GetLine(model, id, false), type = api.GetNameFromTypeCode(material?.type).toLowerCase();
+      const names = type === "ifcmaterial" && value(material?.Name) ? [String(value(material.Name))] : [];
+      for (const field of ["Material", "Materials", "MaterialLayers", "MaterialConstituents", "MaterialProfiles", "ForProfileSet"]) {
+        const child = material?.[field];
+        for (const ref of Array.isArray(child) ? child : child == null ? [] : [child]) names.push(...readMaterialNames(reference(ref), seen));
+      }
+      return names;
+    }
+    const materialRelations = getIds("IFCRELASSOCIATESMATERIAL");
+    for (let i = 0; materialRelations && i < materialRelations.size(); i++) {
+      const relation = api.GetLine(model, materialRelations.get(i), false), names = [...new Set(readMaterialNames(reference(relation?.RelatingMaterial)))];
+      if (!names.length) continue;
+      for (const related of relation.RelatedObjects ?? []) {
+        const item = productMetadata.get(reference(related));
+        if (item) item.materials.push(...names);
+      }
     }
     for (const item of productMetadata.values()) if (item.systemLabel) systemCounts[item.systemLabel] = (systemCounts[item.systemLabel] ?? 0) + 1;
     const candidates = [], searchRadius_m = 0.05, directTouch_m = 0.001, cells = new Map();
@@ -265,7 +286,7 @@ self.onmessage = async ({ data }) => {
         parts.push({ vertices: vertices.buffer, normals: normals.buffer, indices: indices.buffer, transform: Array.from(placed.flatTransformation) });
       }
       const itemMetadata = metadata ?? { storey: null, systemLabel: null, systemSource: null, properties: [], endpoints: null };
-      if (parts.length) batch.push({ id: globalId ?? null, expressId: flat.expressID, type: ifcType, name: metadata?.name ?? line?.Name?.value ?? line?.Name ?? "", storey: itemMetadata.storey, systemLabel: itemMetadata.systemLabel, systemSource: itemMetadata.systemSource, properties: itemMetadata.properties, endpoints: itemMetadata.endpoints, parts });
+      if (parts.length) batch.push({ id: globalId ?? null, expressId: flat.expressID, type: ifcType, name: metadata?.name ?? line?.Name?.value ?? line?.Name ?? "", storey: itemMetadata.storey, systemLabel: itemMetadata.systemLabel, systemSource: itemMetadata.systemSource, materials: itemMetadata.materials ?? [], properties: itemMetadata.properties, endpoints: itemMetadata.endpoints, parts });
       if (batch.length >= 40) flush();
       if (processed % 250 === 0) self.postMessage({ type: "status", text: `Convertendo geometria IFC… ${processed.toLocaleString("pt-BR")} elementos`, progress: 38 + Math.min(58, Math.round(processed / Math.max(total, 1) * 58)) });
     });
@@ -285,6 +306,14 @@ self.onmessage = async ({ data }) => {
     if (withoutProperties) warnings.push(`${withoutProperties} elemento(s) hidráulico(s) sem property sets anexados.`);
     const withoutSystem = [...productMetadata.values()].filter(item => !item.systemLabel).length;
     if (withoutSystem) warnings.push(withoutSystem + " elemento(s) hidráulico(s) sem a propriedade explícita Identificação_Elemento.Rede.");
+    const withoutMaterial = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcpipesegment" && !item.materials.length && !item.properties.some(property => property.name === "Material" && property.value != null)).length;
+    if (withoutMaterial) warnings.push(withoutMaterial + " tubo(s) sem material explícito no IFC; a rugosidade não será presumida.");
+    const pipes = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcpipesegment");
+    const withInternalDiameter = item => item.properties.some(property => property.name === "Diâmetro interno" && typeof property.normalizedValue === "number" && property.normalizedValue > 0);
+    const withLength = item => item.properties.some(property => property.name === "Comprimento" && typeof property.normalizedValue === "number" && property.normalizedValue > 0);
+    const missingInternalDiameter = pipes.filter(item => !withInternalDiameter(item)).length, missingLength = pipes.filter(item => !withLength(item)).length;
+    if (missingInternalDiameter) warnings.push(missingInternalDiameter + " tubo(s) sem diâmetro interno explícito, positivo e normalizado; o nominal não será convertido em diâmetro útil.");
+    if (missingLength) warnings.push(missingLength + " tubo(s) sem comprimento explícito normalizado em metros; a geometria não será usada como comprimento hidráulico sem revisão.");
     const pipeCount = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcpipesegment").length;
     const withoutEndpoints = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcpipesegment" && !item.endpoints).length;
     if (withoutEndpoints) warnings.push(withoutEndpoints + " de " + pipeCount + " tubos sem endpoints extraíveis das representações suportadas (IfcExtrudedAreaSolid/IfcSweptDiskSolid); fora da lista de candidatos.");
@@ -293,7 +322,8 @@ self.onmessage = async ({ data }) => {
     if (metresPerUnit == null) warnings.push("Unidade não suportada: candidatos de conexão não foram gerados.");
     const withoutGeometry = Math.max(0, Object.values(counts).reduce((sum, count) => sum + count, 0) - sent);
     if (withoutGeometry) warnings.push(withoutGeometry + " elemento(s) hidráulico(s) reconhecido(s) não possuem geometria exibível.");
-    self.postMessage({ type: "done", counts, elements: sent, schema, projectName: value(project?.Name), units, metresPerUnit, storeys: storeyCounts, systemCounts, warnings, missingGlobalIds, duplicateGlobalIds, explicitSystems, portRelations, pipeCount, pipesWithEndpoints: pipeCount - withoutEndpoints, candidates });
+    const terminals = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcsanitaryterminal").map(({ expressId, globalId, name, type, storey, systemLabel }) => ({ expressId, globalId, name, type, storey, systemLabel }));
+    self.postMessage({ type: "done", counts, elements: sent, schema, projectName: value(project?.Name), units, metresPerUnit, storeys: storeyCounts, systemCounts, warnings, missingGlobalIds, duplicateGlobalIds, explicitSystems, portRelations, pipeCount, pipesWithEndpoints: pipeCount - withoutEndpoints, pipesMissingInternalDiameter: missingInternalDiameter, pipesMissingLength: missingLength, candidates, terminals });
   } catch (error) {
     self.postMessage({ type: "error", text: error?.message ?? String(error) });
   }
