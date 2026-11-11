@@ -37,6 +37,13 @@ A interface seguirá o estilo da imagem de referência: aplicativo desktop com b
 
 As ações principais serão adaptar ao fluxo hidráulico: abrir IFC, analisar/dimensionar, selecionar bomba quando aplicável e gerar memorial. No modo alimentação, o painel Projeto apresentará a entrada da pressão dinâmica da concessionária e o destino configurável (reservatório ou rede direta). A interface manterá densidade visual e hierarquia semelhantes à referência, com rótulos e estados próprios para água fria, água quente e alimentação. O viewport 3D será baseado na visualização existente do Dimensionador Tipo Grelha (Three.js/WebGL em WebView2), reaproveitando e adaptando geometria IFC, seleção/foco, controles de câmera, enquadramento e vistas, em vez de criar um viewer paralelo.
 
+## Estado atual
+
+- Água fria e alimentação direta/reservatório calculam vazões, perdas Darcy–Weisbach, velocidade e pressão quando todas as entradas físicas obrigatórias estão explicitadas.
+- Água quente calcula apenas a distribuição; o retorno e balanceamento ainda não estão modelados, portanto o resultado fica sinalizado como parcial.
+- Uma curva publicada do sistema pressurizador WDM VPI1 EEP 1.5 15 está integrada para triagem dentro da faixa da tabela; a compatibilidade final requer revisão do fabricante.
+- A exportação disponível é um relatório JSON rastreável. Memorial PDF e seleção do catálogo completo permanecem pendentes.
+
 ## Ordem de construção
 
 `ifc-reader` → `network-topology` → `hydraulic-core` → `feed-supply`, `cold-water` e `hot-water` → `pump-selection` → `results-and-ui` e relatórios integrados.

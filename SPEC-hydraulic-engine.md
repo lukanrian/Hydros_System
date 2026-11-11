@@ -43,12 +43,14 @@ Base disponível: cópia local da ABNT NBR 5626:2020. Confirmar edição e event
 5. [x] Transformar as conexões confirmadas em grafo de nós/trechos e mostrar extremidades abertas e componentes desconectados.
 6. [x] Permitir selecionar a fonte no modelo 3D e guardar carga total/cota por rede; na alimentação, guardar pressões da concessionária e vazão de referência.
 7. [x] Distribuir vazões explícitas marcadas em um cenário simultâneo por rede em árvore, agregando a demanda a jusante de cada trecho; bloquear conexão ambígua, ponta solta, ciclo, componente desconectado ou dado necessário ausente.
-8. [ ] Calcular perdas distribuídas e localizadas, pressões e velocidades por trecho com avisos de dado ausente.
-9. [ ] Habilitar os modos fria/quente/alimentação e suas verificações específicas, incluindo retorno de água quente.
-10. [ ] Integrar curvas de fabricante verificáveis, seleção de bomba e relatório/memorial rastreável.
+8. [x] Calcular perdas distribuídas e localizadas e pressões/velocidades por trecho quando diâmetro, comprimento, rugosidade, K e temperatura estiverem informados com fonte; bloquear dados ausentes. Fator de atrito Churchill; Darcy–Weisbach.
+9. [ ] Modos por rede: água fria e alimentação direta/reservatório implementados com verificações iniciais; retorno hidráulico/balanceamento da água quente permanece pendente. A reposição ao reservatório usa volume diário/tempo explicitados e limites de até 6 h (3 h unifamiliar).
+10. [x] Curva de fabricante verificável WDM VPI1 EEP 1.5 15 (1,5 cv), página impressa 19, foi integrada como triagem por interpolação sem extrapolação; candidato e relatório JSON rastreável disponíveis. Catálogo completo, compatibilidade térmica/elétrica/NPSH e memorial PDF permanecem pendentes.
 
 ## Limites
 
 - Dados de pranchas e memoriais de exemplo podem ajudar a reconhecer nomes, elementos e apresentação. Não são usados para demanda, fatores, coeficientes, rugosidade, perda, pressão de referência, desempenho de bomba ou validação numérica.
 - Catálogo de bomba só pode abastecer a seleção após extração de curva com modelo, unidade, página e faixa de validade identificados.
+- A primeira curva integrada é do sistema pressurizador WDM VPI1 EEP 1.5 15 (uma bomba) e sua triagem não substitui verificação de tensão, temperatura, sucção/NPSH, instalação nem validação do fabricante.
+- A verificação de água quente cobre somente a rede de distribuição. O IFC disponível não permite separar nem fechar com confiança o circuito de retorno; o programa deve mostrar essa limitação e não liberar o resultado como dimensionamento final.
 - Resultados são ferramenta de apoio e precisam deixar entradas, hipóteses, avisos e fonte normativa explícitos para revisão profissional.

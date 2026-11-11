@@ -1,6 +1,6 @@
 # Hydros System
 
-Aplicativo Windows em desenvolvimento para dimensionamento predial de água fria, água quente e alimentação. O primeiro corte importa a geometria hidráulica de IFC4 e permite inspecioná-la em 3D; os cálculos ainda não estão habilitados.
+Aplicativo Windows em desenvolvimento para análise e pré-dimensionamento predial de água fria, água quente e alimentação a partir de IFC4. Inclui visualizador 3D e cálculos hidráulicos condicionados à revisão da rede e à entrada explícita de dados físicos.
 
 ## Executar
 
@@ -13,7 +13,11 @@ dotnet run --project src/Hydros.System.UI/Hydros.System.UI.csproj
 
 É possível abrir um IFC diretamente ao iniciar: `dotnet run --project src/Hydros.System.UI/Hydros.System.UI.csproj -- "C:\caminho\modelo.ifc"`. Também há o botão **Abrir IFC**.
 
-A prévia mostra segmentos de tubulação, conexões, válvulas, bombas e medidores reconhecidos pelo IFC. Use o painel **Projeto** para alternar água fria, água quente e alimentação; no modo alimentação são solicitadas as pressões dinâmica residual, a vazão em que ela foi medida, a pressão máxima estática da concessionária e o destino. Para água fria/quente, selecione a origem no 3D e registre sua carga total e cota. As escolhas e valores ficam salvos localmente por IFC. A aba **Pontos** permite cadastrar vazão máxima, pressão requerida e fonte dos dados por terminal IFC e marcar explicitamente quais pontos participam do cenário simultâneo. **Calcular vazões** agrega essas demandas nos tubos do grafo confirmado quando a topologia forma uma árvore válida. Esse resultado é somente distribuição de vazões: perdas, pressões, diâmetros e bombas ainda não são dimensionados.
+A prévia mostra segmentos de tubulação, conexões, válvulas, bombas e medidores reconhecidos pelo IFC. Use **Projeto** para alternar água fria, água quente e alimentação. A concessionária recebe pressão dinâmica, vazão de referência e pressão estática máxima. Para reservatório, informe tipologia, volume diário e tempo de reposição, e marque no 3D a extremidade de chegada; a vazão vem de volume/tempo e o limite de reposição é 3 h para unifamiliar ou 6 h para demais edificações. Para água fria/quente, selecione a origem no 3D e informe pressões/cota. As entradas são salvas localmente por IFC.
+
+A aba **Pontos** coleta vazão, pressão requerida e fonte por terminal. Marque os pontos simultâneos; **Calcular vazões** agrega as demandas em cada tubo do grafo radial confirmado. Para perdas e pressões, informe temperatura e, por tubo, diâmetro interno, comprimento, rugosidade absoluta, K localizado total e fonte. Comprimentos IFC reconhecidos podem ser usados com a propriedade/unidade original rastreada. O cálculo usa Darcy–Weisbach e calcula velocidade, atrito e pressão nos nós. A dimensão do tubo permanece a informada pelo projetista; o programa ainda não escolhe diâmetros. As cotas de junção são calculadas pela média das cotas dos endpoints IFC confirmados e precisam ser verificadas contra o datum do projeto.
+
+A aba **Bombas** avalia o ponto contra a curva publicada do sistema WDM VPI1 EEP 1.5 15, com interpolação apenas dentro da faixa tabelada. É uma triagem de um modelo e requer confirmação de temperatura, tensão, sucção e instalação. **Exportar relatório JSON** inclui entradas, fontes, resultados por trecho/ponto, avisos e limitações. A água quente ainda não calcula retorno/balanceamento; esse modo não é dimensionamento final.
 
 A aba **Conexões** agrega somente ligações geométricas confirmadas manualmente e informa extremidades abertas/componentes desconectados. O leitor mostra associações de material e dimensões quando o IFC as fornece; não interpreta diâmetro nominal como diâmetro interno. Consulte [SPEC-hydraulic-engine.md](SPEC-hydraulic-engine.md) para as próximas entregas e requisitos de entrada.
 
