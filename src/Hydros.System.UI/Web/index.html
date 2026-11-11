@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hydros System</title>
+  <link rel="stylesheet" href="app.css">
+  <script type="importmap">{"imports":{"three":"./lib/three.module.min.js"}}</script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark">⌁</span><div><strong>Hydros System</strong><small>dimensionamento hidráulico · água fria · água quente · alimentação</small></div></div>
+    <div id="fileName" class="file-name">nenhum IFC selecionado</div>
+    <div class="actions"><button id="btnAbrir" class="btn">Abrir IFC</button><button class="btn primary" disabled>Analisar</button><button class="btn" disabled>Selecionar bomba</button><button class="btn primary" disabled>Gerar memorial</button><button class="btn">Arquivos ▾</button><button id="btnTheme" class="btn icon" title="Alternar tema">☾</button></div>
+  </header>
+  <div class="workspace">
+    <aside class="side">
+      <section class="panel tabs-panel">
+        <nav class="tabs"><button class="tab active" data-tab="projeto">Projeto</button><button class="tab" data-tab="conexoes">Conexões</button><button class="tab" data-tab="bombas">Bombas</button></nav>
+        <div class="tab-content" id="tab-projeto">
+          <label class="field">Sistema para dimensionamento<select id="system"><option value="cold">Água fria</option><option value="hot">Água quente</option><option value="feed">Alimentação</option></select></label>
+          <div id="feedFields" hidden><label class="field">Pressão dinâmica da concessionária (m.c.a.)<input id="utilityPressure" type="number" min="0" step="0.1" placeholder="Informar pressão residual"></label><label class="field">Destino<select id="destination"><option value="tank">Reservatório predial</option><option value="direct">Rede direta</option></select></label><p class="hint">Informe a pressão disponível durante a vazão de projeto.</p></div>
+          <div id="projectSummary" class="summary empty">Abra um IFC para inspecionar a rede hidráulica.</div>
+          <div id="warnings"></div>
+        </div>
+        <div class="tab-content" id="tab-conexoes" hidden><div id="connectionSummary" class="summary empty">Abra um IFC para procurar candidatos geométricos de conexão.</div><div id="connectionList"></div><div class="connection-pages"><button id="connectionPrev" class="btn small" disabled>Anterior</button><span id="connectionPageLabel">0 / 0</span><button id="connectionNext" class="btn small" disabled>Próxima</button></div></div>
+        <div class="tab-content" id="tab-bombas" hidden><div class="summary empty">A seleção de bombas será habilitada após o dimensionamento.</div></div>
+      </section>
+      <section class="panel properties"><div class="panel-title"><strong>Propriedades</strong><button id="btnClear" class="btn small">Limpar seleção</button></div><div id="properties" class="summary empty">Selecione um elemento no modelo.</div></section>
+    </aside>
+    <main class="viewport-shell">
+      <div class="tools"><button id="btnFit" class="btn">Enquadrar</button><button id="btnZoom" class="btn">Aproximar seleção</button><span class="group"><span class="muted">Vista</span><button class="btn active" data-view="3d">3D</button><button id="btnTop" class="btn" data-view="top">Topo</button></span><label class="group"><span class="muted">Colorir</span><select id="colorMode"><option value="type">Classe IFC</option><option value="system">Sistema</option></select></label><label class="group show"><span>Mostrar</span><select id="filter"><option value="all">Todos os elementos hidráulicos</option><option value="pipes">Tubos</option><option value="components">Conexões e equipamentos</option></select></label></div>
+      <div id="viewport" aria-label="Visualizador 3D do modelo IFC"><div id="emptyState">A geometria hidráulica aparece aqui depois de abrir o IFC.</div><div id="loading" hidden><div class="spinner"></div><span id="loadText">Aguardando arquivo…</span><progress id="loadProgress" max="100" value="0"></progress></div></div>
+      <div class="hintbar">Esquerdo: orbitar · Roda pressionada: mover · Roda: zoom no cursor · Clique: selecionar · Duplo clique: aproximar · F: enquadrar · Esc: limpar</div>
+    </main>
+  </div>
+  <footer><span id="status">Pronto.</span><button class="btn small" id="btnOutput">Saída ▴</button></footer>
+  <section id="output" hidden></section>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

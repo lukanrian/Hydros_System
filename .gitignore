@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+*.user
+Catalogo/
+IFC Modelo/
+Normas/
+PROJETOS MODELO/
+graphify-out/
+output/
+tmp/
