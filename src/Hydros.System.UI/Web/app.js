@@ -26,6 +26,7 @@ let worker = null, selected = null, modelName = "", pendingName = "", activeFile
 let importedCandidates = [], terminals = [], reviewDecisions = {}, projectInputs = {}, reviewPage = 0, demandPage = 0;
 const reviewPageSize = 50;
 const demandPageSize = 30;
+let flowResults = new Map(), flowCalculation = null;
 const batches = [], pendingBatches = [], outputLines = [];
 const colors = { pipe: 0x3d78c5, fitting: 0x8292a6, valve: 0xe5a03c, pump: 0x9a66bb, terminal: 0x39a487, meter: 0x35a8b4, other: 0x8993a1 };
 const axis = new THREE.Matrix4().set(1,0,0,0, 0,0,-1,0, 0,1,0,0, 0,0,0,1);
@@ -67,7 +68,7 @@ function discardPending() {
 }
 function discardActive() {
   for (const batch of batches) { batch.mesh.dispose(); batch.mesh.material.dispose(); }
-  batches.length = 0; world.clear(); selected = null; showProperties(null);
+  batches.length = 0; world.clear(); selected = null; flowResults = new Map(); flowCalculation = null; showProperties(null);
 }
 function commitPending() {
   discardActive();
@@ -124,7 +125,9 @@ function showProperties(item) {
   const propertyHtml = properties.map(property => "<div><strong>" + escapeHtml(property.set) + " · " + escapeHtml(property.name) + "</strong><span>" + escapeHtml(property.value ?? "sem valor") + (property.sourceUnit ? " " + escapeHtml(property.sourceUnit) : "") + (property.valueType ? " (" + escapeHtml(property.valueType) + ")" : "") + (property.normalizedValue == null ? "" : " · " + property.normalizedValue.toLocaleString("pt-BR", { maximumFractionDigits: 6 }) + " m") + "</span></div>").join("");
   const system = item.systemLabel ? escapeHtml(item.systemLabel) + " · fonte: " + escapeHtml(item.systemSource) : "não informado no IFC";
   const materials = item.materials?.length ? escapeHtml([...new Set(item.materials)].join(", ")) + " · IfcRelAssociatesMaterial" : "não informado por relação de material IFC";
-  $("properties").innerHTML = "<h3>" + escapeHtml(item.name || item.type) + "</h3><dl><dt>Classe IFC</dt><dd>" + escapeHtml(item.type) + "</dd><dt>GlobalId</dt><dd>" + escapeHtml(item.id ?? "não informado") + "</dd><dt>Express ID</dt><dd>" + item.expressId + "</dd><dt>Pavimento IFC</dt><dd>" + escapeHtml(item.storey ?? "não associado") + "</dd><dt>Rede IFC</dt><dd>" + system + "</dd><dt>Material IFC</dt><dd>" + materials + "</dd></dl>" + (properties.length ? "<details class=\"metadata-block\"><summary>Propriedades IFC (" + item.properties.length + ")</summary><div class=\"metadata-list\">" + propertyHtml + (item.properties.length > 80 ? "<div>Mostrando 80 de " + item.properties.length + " propriedades.</div>" : "") + "</div></details>" : "<div class=\"warning\">Sem property sets IFC associados.</div>");
+  const calculatedFlow = flowResults.get(item.expressId);
+  const flowRow = calculatedFlow == null ? "" : "<dt>Vazão neste cenário</dt><dd>" + calculatedFlow.toLocaleString("pt-BR", { maximumFractionDigits: 4 }) + " L/s · soma das demandas selecionadas a jusante</dd>";
+  $("properties").innerHTML = "<h3>" + escapeHtml(item.name || item.type) + "</h3><dl><dt>Classe IFC</dt><dd>" + escapeHtml(item.type) + "</dd><dt>GlobalId</dt><dd>" + escapeHtml(item.id ?? "não informado") + "</dd><dt>Express ID</dt><dd>" + item.expressId + "</dd><dt>Pavimento IFC</dt><dd>" + escapeHtml(item.storey ?? "não associado") + "</dd><dt>Rede IFC</dt><dd>" + system + "</dd><dt>Material IFC</dt><dd>" + materials + "</dd>" + flowRow + "</dl>" + (properties.length ? "<details class=\"metadata-block\"><summary>Propriedades IFC (" + item.properties.length + ")</summary><div class=\"metadata-list\">" + propertyHtml + (item.properties.length > 80 ? "<div>Mostrando 80 de " + item.properties.length + " propriedades.</div>" : "") + "</div></details>" : "<div class=\"warning\">Sem property sets IFC associados.</div>");
 }
 function loadReviewDecisions(fileKey) {
   try { const saved = JSON.parse(localStorage.getItem("hydros:reviews:" + fileKey) || "{}"); reviewDecisions = saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {}; }
@@ -134,16 +137,37 @@ function loadProjectInputs(fileKey) {
   let saved = {};
   try { const value = JSON.parse(localStorage.getItem("hydros:inputs:" + fileKey) || "{}"); if (value && typeof value === "object" && !Array.isArray(value)) saved = value; }
   catch { log("As entradas salvas do projeto não puderam ser lidas; usando campos vazios."); }
-  projectInputs = { ...saved, demands: saved.demands && typeof saved.demands === "object" && !Array.isArray(saved.demands) ? saved.demands : {} };
+  const boundaries = {};
+  for (const system of ["cold", "hot", "feed"]) {
+    const boundary = saved.boundaries?.[system];
+    if (boundary && typeof boundary === "object" && !Array.isArray(boundary) && Number.isInteger(boundary.expressId) && typeof boundary.type === "string") boundaries[system] = { ...boundary, end: boundary.end === 1 ? 1 : boundary.end === 0 ? 0 : null, headM: typeof boundary.headM === "string" ? boundary.headM : "", elevationM: typeof boundary.elevationM === "string" ? boundary.elevationM : "" };
+  }
+  projectInputs = { ...saved, demands: saved.demands && typeof saved.demands === "object" && !Array.isArray(saved.demands) ? saved.demands : {}, boundaries };
   if (["cold", "hot", "feed"].includes(saved.system)) $("system").value = saved.system;
   $("utilityPressure").value = typeof saved.utilityPressure === "string" ? saved.utilityPressure : "";
+  $("utilityFlowLps").value = typeof saved.utilityFlowLps === "string" ? saved.utilityFlowLps : "";
   $("utilityPressureMax").value = typeof saved.utilityPressureMax === "string" ? saved.utilityPressureMax : "";
   $("destination").value = saved.destination === "direct" ? "direct" : "tank";
-  $("feedFields").hidden = $("system").value !== "feed";
+  $("sourceElevation").value = typeof boundaries[saved.system]?.elevationM === "string" ? boundaries[saved.system].elevationM : "";
+  updateBoundaryFields();
+}
+function updateBoundaryFields() {
+  const system = $("system").value, boundary = projectInputs.boundaries?.[system];
+  $("feedFields").hidden = system !== "feed";
+  $("sourceHeadField").hidden = system === "feed";
+  $("sourceHeadHint").hidden = system === "feed";
+  $("sourceEndField").hidden = !boundary || typeof boundary.type !== "string" || boundary.type.toLowerCase() !== "ifcpipesegment";
+  $("sourceEnd").value = String(boundary?.end ?? 0);
+  $("sourceHead").value = typeof boundary?.headM === "string" ? boundary.headM : "";
+  $("sourceElevation").value = typeof boundary?.elevationM === "string" ? boundary.elevationM : "";
+  $("sourceElevationField").hidden = system === "feed";
+  $("sourceLabel").textContent = boundary ? boundary.type + " · Express ID " + boundary.expressId + (boundary.end == null ? " · nó do componente" : " · extremidade " + (boundary.end + 1)) : "Origem não selecionada para este sistema.";
 }
 function saveProjectInputs() {
   if (!activeFileKey) return;
-  projectInputs = { ...projectInputs, system: $("system").value, utilityPressure: $("utilityPressure").value, utilityPressureMax: $("utilityPressureMax").value, destination: $("destination").value };
+  projectInputs = { ...projectInputs, system: $("system").value, utilityPressure: $("utilityPressure").value, utilityFlowLps: $("utilityFlowLps").value, utilityPressureMax: $("utilityPressureMax").value, destination: $("destination").value };
+  const boundary = projectInputs.boundaries?.[projectInputs.system];
+  if (boundary) { boundary.headM = $("sourceHead").value; boundary.elevationM = $("sourceElevation").value; }
   try { localStorage.setItem("hydros:inputs:" + activeFileKey, JSON.stringify(projectInputs)); }
   catch { log("Não foi possível salvar as entradas locais deste projeto."); }
 }
@@ -197,17 +221,82 @@ function reviewedTopology() {
   }
   return { pipeCount: pipes.length, openEnds: Math.max(0, pipes.length * 2 - connectedPorts.size), components, connectedTerminals: linkedTerminals.size };
 }
+function calculateReviewedFlows() {
+  const system = $("system").value, boundary = projectInputs.boundaries?.[system], error = message => ({ error: message });
+  if (!boundary) return error("Defina a origem da rede ativa no modelo 3D.");
+  if (!batches.some(batch => batch.records.some(item => item.kind === "pipe" && item.endpoints?.length === 2 && systemKind(item.systemLabel ?? "") === system))) return error("A rede ativa não tem tubos com endpoints geométricos.");
+  if (system === "feed" && $("destination").value === "tank") return error("Para alimentação de reservatório, falta calcular o volume diário e o tempo de reposição antes de definir a vazão de projeto.");
+  if (system === "feed" && [$("utilityPressure").value, $("utilityFlowLps").value, $("utilityPressureMax").value].some(value => String(value).trim() === "" || !Number.isFinite(Number(value)) || Number(value) < 0)) return error("Informe valores não negativos de pressão dinâmica, vazão correspondente e pressão máxima estática da concessionária.");
+  if (system === "feed" && (Number($("utilityFlowLps").value) <= 0 || Number($("utilityPressureMax").value) < Number($("utilityPressure").value))) return error("A vazão da medição deve ser positiva e a pressão máxima estática não pode ser menor que a dinâmica informada.");
+  if (system !== "feed" && [boundary.headM, boundary.elevationM].some(value => String(value ?? "").trim() === "" || !Number.isFinite(Number(value)))) return error("Informe carga total e cota da origem para a rede ativa.");
+  const parent = new Map(), find = key => { if (!parent.has(key)) parent.set(key, key); if (parent.get(key) !== key) parent.set(key, find(parent.get(key))); return parent.get(key); };
+  const union = (a, b) => { const x = find(a), y = find(b); if (x === y) return false; parent.set(y, x); return true; };
+  const pipeKey = (id, end) => "p:" + id + ":" + end, componentKey = id => "c:" + id;
+  const portConnections = new Map(), terminalNodes = new Map(), filtered = [];
+  for (const candidate of importedCandidates) {
+    if (reviewDecisions[candidate.key] !== "Confirmada") continue;
+    const from = candidate.from, to = candidate.to;
+    if (systemKind(from.system ?? "") !== system || systemKind(to.system ?? "") !== system) continue;
+    const fromKey = pipeKey(from.expressId, from.end), targetIsPipe = to.type.toLowerCase() === "ifcpipesegment", targetIsTerminal = to.type.toLowerCase() === "ifcsanitaryterminal";
+    const toKey = targetIsPipe ? pipeKey(to.expressId, to.end) : componentKey(to.expressId);
+    filtered.push([fromKey, toKey]);
+    if (targetIsTerminal) terminalNodes.set(to.expressId, fromKey);
+    for (const key of [fromKey, ...(targetIsPipe ? [toKey] : [])]) portConnections.set(key, (portConnections.get(key) ?? 0) + 1);
+  }
+  if ([...portConnections.values()].some(count => count !== 1)) return error("Há extremidades de tubo com mais de uma conexão confirmada; resolva as ambiguidades.");
+  const pipes = batches.flatMap(batch => batch.records).filter(item => item.kind === "pipe" && item.endpoints?.length === 2 && systemKind(item.systemLabel ?? "") === system);
+  const keys = new Set();
+  for (const pipe of pipes) { keys.add(pipeKey(pipe.expressId, 0)); keys.add(pipeKey(pipe.expressId, 1)); }
+  for (const [a, b] of filtered) { keys.add(a); keys.add(b); }
+  for (const [a, b] of filtered) { if (!union(a, b)) return error("A rede revisada contém um ciclo; esta versão só distribui vazões em árvores."); }
+  for (const pipe of pipes) union(pipeKey(pipe.expressId, 0), pipeKey(pipe.expressId, 1));
+  const rootFor = key => find(key), graph = new Map();
+  for (const key of keys) { const root = rootFor(key); if (!graph.has(root)) graph.set(root, new Set()); }
+  for (const pipe of pipes) { const a = rootFor(pipeKey(pipe.expressId, 0)), b = rootFor(pipeKey(pipe.expressId, 1)); if (a === b) return error("Uma conexão fecha o tubo sobre o próprio nó; revise as pontas confirmadas."); graph.get(a)?.add(b); graph.get(b)?.add(a); }
+  const sourceKey = boundary.type.toLowerCase() === "ifcpipesegment" ? pipeKey(boundary.expressId, boundary.end ?? 0) : componentKey(boundary.expressId), source = rootFor(sourceKey);
+  if (!graph.has(source)) return error("A origem selecionada não pertence à rede hidráulica classificada como " + $("system").selectedOptions[0].text + ".");
+  const openPorts = pipes.flatMap(pipe => [0, 1].map(end => pipeKey(pipe.expressId, end))).filter(key => !portConnections.has(key) && key !== sourceKey);
+  if (openPorts.length) return error("Há " + openPorts.length + " extremidade(s) de tubo sem conexão confirmada, além da origem; revise o grafo.");
+  const active = terminals.filter(item => projectInputs.demands?.[item.expressId]?.include === true && systemKind(item.systemLabel ?? "") === system);
+  if (!active.length) return error("Marque ao menos um ponto de utilização no cenário da rede ativa.");
+  const demandAt = new Map();
+  for (const terminal of active) {
+    const values = projectInputs.demands[terminal.expressId], flow = Number(values.flowLps);
+    if (!Number.isFinite(flow) || flow <= 0 || !String(values.source ?? "").trim()) return error("Cada ponto incluído precisa de vazão positiva e fonte do valor.");
+    const key = terminalNodes.get(terminal.expressId);
+    if (!key) return error("O terminal Express ID " + terminal.expressId + " não tem conexão confirmada no grafo.");
+    const node = rootFor(key); demandAt.set(node, (demandAt.get(node) ?? 0) + flow);
+  }
+  const parentNode = new Map([[source, null]]), order = [source];
+  for (let i = 0; i < order.length; i++) for (const next of graph.get(order[i]) ?? []) {
+    if (!parentNode.has(next)) { parentNode.set(next, order[i]); order.push(next); }
+    else if (parentNode.get(order[i]) !== next) return error("A rede revisada contém um ciclo; esta versão só distribui vazões em árvores.");
+  }
+  if (order.length !== graph.size) return error("Há componentes fora do caminho da origem; reconecte a rede ou restrinja o modelo ao sistema ativo.");
+  const subtree = new Map(demandAt);
+  for (const node of order.slice(1).reverse()) { const p = parentNode.get(node); subtree.set(p, (subtree.get(p) ?? 0) + (subtree.get(node) ?? 0)); }
+  const byRoot = new Map();
+  for (const pipe of pipes) { const a = rootFor(pipeKey(pipe.expressId, 0)), b = rootFor(pipeKey(pipe.expressId, 1)); const child = parentNode.get(a) === b ? a : parentNode.get(b) === a ? b : null; if (child) byRoot.set(child, pipe.expressId); }
+  const result = new Map();
+  for (const [node, flow] of subtree) if (node !== source) { const expressId = byRoot.get(node); if (expressId != null) result.set(expressId, flow); }
+  if (result.size !== pipes.length) return error("Não foi possível associar todos os tubos do sistema à árvore de caminhos da origem.");
+  return { result, totalLps: subtree.get(source) ?? 0, terminalCount: active.length, method: "Soma das vazões máximas explicitamente marcadas no cenário, agregadas a jusante em árvore radial." };
+}
 function renderDemandInputs() {
   const pages = Math.ceil(terminals.length / demandPageSize), start = demandPage * demandPageSize;
-  const filled = terminals.filter(item => String(projectInputs.demands?.[item.expressId]?.flowLps ?? "").trim() !== "").length;
+  const filled = terminals.filter(item => String(projectInputs.demands?.[item.expressId]?.flowLps ?? "").trim() !== "").length, activeCount = terminals.filter(item => projectInputs.demands?.[item.expressId]?.include === true).length;
   $("demandSummary").className = "summary";
-  $("demandSummary").innerHTML = "<dl><dt>Pontos IFC de utilização</dt><dd>" + terminals.length.toLocaleString("pt-BR") + "</dd><dt>Com vazão informada</dt><dd>" + filled.toLocaleString("pt-BR") + "</dd></dl><div class=\"warning\">Informe explicitamente a vazão máxima de projeto de cada ponto e registre sua fonte. Nenhuma simultaneidade é presumida; ainda não inicia cálculo.</div>";
+  $("demandSummary").innerHTML = "<dl><dt>Pontos IFC de utilização</dt><dd>" + terminals.length.toLocaleString("pt-BR") + "</dd><dt>Com vazão informada</dt><dd>" + filled.toLocaleString("pt-BR") + "</dd><dt>Incluídos no cenário</dt><dd>" + activeCount.toLocaleString("pt-BR") + "</dd></dl><div class=\"warning\">Marque os pontos que pertencem explicitamente ao cenário simultâneo. A soma abaixo distribui vazão em rede radial; ainda não calcula perdas, pressões nem diâmetros.</div>";
   $("demandPageLabel").textContent = pages ? (demandPage + 1) + " / " + pages : "0 / 0";
   $("demandPrev").disabled = demandPage === 0; $("demandNext").disabled = demandPage + 1 >= pages;
   $("demandList").innerHTML = terminals.slice(start, start + demandPageSize).map(item => {
     const values = projectInputs.demands?.[item.expressId] ?? {}, identity = String(item.expressId);
-    return "<article class=\"candidate demand-item\"><strong>" + escapeHtml(item.name || item.type) + " · " + escapeHtml(item.storey ?? "pavimento não associado") + " · Express ID " + identity + "</strong>" + (item.systemLabel ? "<div class=\"candidate-detail\">Rede IFC: " + escapeHtml(item.systemLabel) + "</div>" : "") + "<div class=\"demand-fields\"><label>Vazão máx. (L/s)<input type=\"number\" min=\"0\" step=\"any\" data-demand=\"flowLps\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.flowLps ?? "") + "\"></label><label>Pressão requerida (m.c.a.)<input type=\"number\" min=\"0\" step=\"any\" data-demand=\"pressureMca\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.pressureMca ?? "") + "\"></label><label>Fonte dos valores<input type=\"text\" maxlength=\"160\" data-demand=\"source\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.source ?? "") + "\" placeholder=\"Fabricante ou especificação\"></label></div></article>";
+    return "<article class=\"candidate demand-item\"><strong>" + escapeHtml(item.name || item.type) + " · " + escapeHtml(item.storey ?? "pavimento não associado") + " · Express ID " + identity + "</strong>" + (item.systemLabel ? "<div class=\"candidate-detail\">Rede IFC: " + escapeHtml(item.systemLabel) + "</div>" : "") + "<label class=\"scenario-check\"><input type=\"checkbox\" data-demand=\"include\" data-express-id=\"" + identity + "\" " + (values.include === true ? "checked" : "") + "> Incluir neste cenário simultâneo</label><div class=\"demand-fields\"><label>Vazão máx. (L/s)<input type=\"number\" min=\"0\" step=\"any\" data-demand=\"flowLps\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.flowLps ?? "") + "\"></label><label>Pressão requerida (m.c.a.)<input type=\"number\" min=\"0\" step=\"any\" data-demand=\"pressureMca\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.pressureMca ?? "") + "\"></label><label>Fonte dos valores<input type=\"text\" maxlength=\"160\" data-demand=\"source\" data-express-id=\"" + identity + "\" value=\"" + escapeHtml(values.source ?? "") + "\" placeholder=\"Fabricante ou especificação\"></label></div></article>";
   }).join("") || "<div class=\"summary empty\">Nenhum IfcSanitaryTerminal foi reconhecido neste IFC.</div>";
+  $("btnCalcFlows").disabled = !terminals.length;
+  if (flowCalculation?.error) $("flowResult").innerHTML = "<div class=\"warning error\">" + escapeHtml(flowCalculation.error) + "</div>";
+  else if (flowCalculation) $("flowResult").innerHTML = "<div class=\"summary metadata-block\"><dl><dt>Vazão total do cenário</dt><dd>" + flowCalculation.totalLps.toLocaleString("pt-BR", { maximumFractionDigits: 4 }) + " L/s</dd><dt>Pontos incluídos</dt><dd>" + flowCalculation.terminalCount + "</dd><dt>Método</dt><dd>" + escapeHtml(flowCalculation.method) + "</dd><dt>Trechos atribuídos</dt><dd>" + flowCalculation.result.size + "</dd></dl><div class=\"warning\">Distribuição preliminar de vazão. Não representa dimensionamento, verificação de pressão ou seleção de bomba.</div></div>";
+  else $("flowResult").innerHTML = "";
 }
 function focusElement(expressId) {
   const item = batches.flatMap(batch => batch.records).find(record => record.expressId === expressId);
@@ -226,6 +315,7 @@ function pick(event) {
 function setSelection(hit) {
   for (const batch of batches) batch.records.forEach((item, id) => { if (item.expressId === selected) batch.mesh.setColorAt(id, new THREE.Color(displayColor(item))); });
   selected = hit?.item.expressId ?? null;
+  $("btnSetSource").disabled = !hit;
   if (hit) {
     for (const batch of batches) batch.records.forEach((item, id) => { if (item.expressId === selected) batch.mesh.setColorAt(id, new THREE.Color(0xf04f37)); });
     controls.setOrbitPoint(hit.point.x, hit.point.y, hit.point.z); showProperties(hit.item);
@@ -259,17 +349,36 @@ $("demandNext").onclick = () => { demandPage++; renderDemandInputs(); };
 $("demandList").onchange = event => {
   const input = event.target.closest("input[data-demand]"); if (!input) return;
   const id = input.dataset.expressId, field = input.dataset.demand;
-  projectInputs.demands[id] = { ...(projectInputs.demands[id] ?? {}), [field]: input.value };
-  saveProjectInputs(); renderDemandInputs();
+  projectInputs.demands[id] = { ...(projectInputs.demands[id] ?? {}), [field]: field === "include" ? input.checked : input.value };
+  flowResults = new Map(); flowCalculation = null; saveProjectInputs(); renderDemandInputs();
 };
+$("btnCalcFlows").onclick = () => {
+  const calculated = calculateReviewedFlows();
+  if (calculated.error) { flowResults = new Map(); flowCalculation = calculated; }
+  else { flowResults = calculated.result; flowCalculation = calculated; log("Vazões distribuídas no grafo revisado: " + calculated.totalLps.toLocaleString("pt-BR") + " L/s; sem cálculo de perdas ou pressões."); }
+  if (selected != null) { const item = batches.flatMap(batch => batch.records).find(record => record.expressId === selected); showProperties(item); }
+  renderDemandInputs();
+};
+$("btnSetSource").onclick = () => {
+  if (selected == null) return;
+  const item = batches.flatMap(batch => batch.records).find(record => record.expressId === selected); if (!item) return;
+  const boundary = { expressId: item.expressId, type: item.type, name: item.name, end: item.kind === "pipe" ? Number($("sourceEnd").value) : null, headM: projectInputs.boundaries?.[$("system").value]?.headM ?? "", elevationM: projectInputs.boundaries?.[$("system").value]?.elevationM ?? "" };
+  projectInputs.boundaries = { ...projectInputs.boundaries, [$("system").value]: boundary };
+  updateBoundaryFields(); saveProjectInputs();
+};
+$("sourceEnd").onchange = () => {
+  const boundary = projectInputs.boundaries?.[$("system").value];
+  if (boundary) { boundary.end = Number($("sourceEnd").value); updateBoundaryFields(); saveProjectInputs(); }
+};
+$("sourceHead").onchange = $("sourceElevation").onchange = saveProjectInputs;
 $("connectionList").onclick = event => {
   const button = event.target.closest("button[data-action]"); if (!button) return;
   const candidate = importedCandidates[Number(button.dataset.index)]; if (!candidate) return;
   if (button.dataset.action === "focus") focusElement(candidate.from.expressId);
-  else { reviewDecisions[candidate.key] = button.dataset.action; saveReviewDecisions(); renderConnectionReview(); }
+  else { reviewDecisions[candidate.key] = button.dataset.action; flowResults = new Map(); flowCalculation = null; saveReviewDecisions(); renderConnectionReview(); renderDemandInputs(); }
 };
-$("system").onchange = () => { $("feedFields").hidden = $("system").value !== "feed"; saveProjectInputs(); };
-$("utilityPressure").onchange = $("utilityPressureMax").onchange = $("destination").onchange = saveProjectInputs;
+$("system").onchange = () => { flowResults = new Map(); flowCalculation = null; updateBoundaryFields(); saveProjectInputs(); renderDemandInputs(); };
+$("utilityPressure").onchange = $("utilityFlowLps").onchange = $("utilityPressureMax").onchange = $("destination").onchange = saveProjectInputs;
 document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () => {
   document.querySelectorAll("[data-tab]").forEach(x => x.classList.toggle("active", x === button));
   document.querySelectorAll(".tab-content").forEach(x => x.hidden = x.id !== `tab-${button.dataset.tab}`);

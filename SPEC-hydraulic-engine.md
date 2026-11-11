@@ -41,8 +41,8 @@ Base disponível: cópia local da ABNT NBR 5626:2020. Confirmar edição e event
 3. [x] Representar os pontos de utilização e coletar vazões de projeto explícitas com origem/unidade.
 4. [x] Extrair material associado e propriedades de diâmetro/comprimento do IFC com unidade; avisar quando diâmetro interno ou comprimento válido estiver ausente.
 5. [x] Transformar as conexões confirmadas em grafo de nós/trechos e mostrar extremidades abertas e componentes desconectados.
-6. [ ] Permitir selecionar fonte, cota/nível e condição de contorno de cada rede.
-7. [ ] Calcular vazões em redes radiais a partir das vazões explícitas dos pontos e registrar o método.
+6. [x] Permitir selecionar a fonte no modelo 3D e guardar carga total/cota por rede; na alimentação, guardar pressões da concessionária e vazão de referência.
+7. [x] Distribuir vazões explícitas marcadas em um cenário simultâneo por rede em árvore, agregando a demanda a jusante de cada trecho; bloquear conexão ambígua, ponta solta, ciclo, componente desconectado ou dado necessário ausente.
 8. [ ] Calcular perdas distribuídas e localizadas, pressões e velocidades por trecho com avisos de dado ausente.
 9. [ ] Habilitar os modos fria/quente/alimentação e suas verificações específicas, incluindo retorno de água quente.
 10. [ ] Integrar curvas de fabricante verificáveis, seleção de bomba e relatório/memorial rastreável.
