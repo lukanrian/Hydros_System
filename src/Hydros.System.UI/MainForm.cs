@@ -12,6 +12,7 @@ internal sealed class MainForm : Form
     private readonly string initialFile;
     private string selectedIfc = "";
     private string pendingIfc = "";
+    private bool savingMemorial;
 
     public MainForm(string[] args)
     {
@@ -43,12 +44,14 @@ internal sealed class MainForm : Form
                 try
                 {
                     using var json = JsonDocument.Parse(message.WebMessageAsJson);
-                    if (!json.RootElement.TryGetProperty("type", out var type)) return;
+                    if (json.RootElement.ValueKind != JsonValueKind.Object ||
+                        !json.RootElement.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String) return;
                     switch (type.GetString())
                     {
                         case "openIfc": OpenIfc(); break;
                         case "modelAccepted" when pendingIfc.Length > 0: selectedIfc = pendingIfc; pendingIfc = ""; break;
                         case "modelRejected": pendingIfc = ""; break;
+                        case "saveMemorial": SaveMemorial(json.RootElement); break;
                     }
                 }
                 catch (JsonException) { Post(new { type = "error", text = "Mensagem inválida recebida pela interface." }); }
@@ -72,6 +75,64 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         pendingIfc = Path.GetFullPath(dialog.FileName);
         PostFileSelected(pendingIfc);
+    }
+
+    private void SaveMemorial(JsonElement request)
+    {
+        if (savingMemorial) return;
+        if (!request.TryGetProperty("sections", out var data)) throw new JsonException();
+        var sections = data.Deserialize<MemorialSection[]>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        if (sections is not { Length: > 0 } || sections.Any(section =>
+            section is null || string.IsNullOrWhiteSpace(section.Title) ||
+            section.Paragraphs is null || section.Paragraphs.Any(value => value is null) ||
+            (section.Columns is null) != (section.Rows is null) ||
+            (section.Columns is { } columns && (columns.Length is not (5 or 7 or 9) || columns.Any(value => value is null) ||
+                section.Rows!.Any(row => row is null || row.Length != columns.Length || row.Any(value => value is null))))))
+            throw new JsonException();
+
+        savingMemorial = true;
+        string? temporaryPath = null;
+        try
+        {
+            var model = Path.GetFileNameWithoutExtension(selectedIfc);
+            using var dialog = new SaveFileDialog
+            {
+                Title = "Salvar memorial de cálculo em Word",
+                Filter = "Documento do Word (*.docx)|*.docx",
+                DefaultExt = "docx",
+                AddExtension = true,
+                FileName = $"{(string.IsNullOrWhiteSpace(model) ? "hydros" : model)}-memorial-hidraulico.docx"
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            if (!Path.GetExtension(dialog.FileName).Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            {
+                Post(new { type = "error", text = "Use a extensão .docx para salvar o memorial em Word." });
+                return;
+            }
+
+            var path = Path.Combine(Path.GetDirectoryName(dialog.FileName)!, $".hydros-{Guid.NewGuid():N}.tmp");
+            using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write))
+            {
+                temporaryPath = path;
+                MemorialWord.Write(output, sections);
+            }
+            File.Move(path, dialog.FileName, overwrite: true);
+            temporaryPath = null;
+            Post(new { type = "memorialSaved", text = $"Memorial salvo em {dialog.FileName}" });
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Post(new { type = "error", text = $"Não foi possível salvar o memorial em Word. {error.Message}" });
+        }
+        finally
+        {
+            savingMemorial = false;
+            if (temporaryPath is not null)
+            {
+                try { File.Delete(temporaryPath); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+            }
+        }
     }
 
     private void PostFileSelected(string path)
@@ -106,6 +167,10 @@ internal sealed class MainForm : Form
             var headers = $"Content-Type: application/octet-stream\r\nContent-Length: {info.Length}\r\nLast-Modified: {info.LastWriteTimeUtc:R}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: https://app.hydros\r\nAccess-Control-Expose-Headers: Last-Modified, Content-Length";
             Stream? body = e.Request.Method == "HEAD" ? null : new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read);
             e.Response = core.Environment.CreateWebResourceResponse(body, 200, "OK", headers);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            e.Response = core.Environment.CreateWebResourceResponse(null, 403, "Forbidden", "Access-Control-Allow-Origin: https://app.hydros");
         }
         catch (IOException)
         {

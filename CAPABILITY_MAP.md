@@ -20,16 +20,16 @@ Essas informações são específicas de cada projeto. Diâmetros, cotas, press�
 
 ## Módulos propostos
 
-| Módulo | Responsabilidade | Depende de |
-|---|---|---|
-| `ifc-reader` | Abrir IFC4, reconhecer unidades, elementos hidráulicos, propriedades e geometria; apontar dados ausentes ou não reconhecidos. | — |
-| `network-topology` | Construir a rede por geometria/relacionamentos IFC, exibir conexões inferidas e permitir revisão antes do cálculo. | `ifc-reader` |
-| `hydraulic-core` | Solver comum de nós, trechos, perdas, demandas e condições de contorno, com unidades e convergência verificáveis. | `ifc-reader`, `network-topology` |
-| `cold-water` | Definir demanda de água fria por pontos de utilização e verificar vazões/pressões na rede. | `hydraulic-core` |
-| `hot-water` | Dimensionar a distribuição e o retorno hidráulico de água quente com critérios próprios; a energia do aquecedor fica fora da primeira versão. | `hydraulic-core` |
-| `feed-supply` | Dimensionar a alimentação e avaliar se a pressão disponível da concessionária atende à demanda, indicando a pressão/altura faltante quando não atender. | `hydraulic-core` |
-| `pump-selection` | Ler curvas dos catálogos Schneider/WDM, calcular pontos de operação e classificar candidatos com dados e critérios rastreáveis. | `hydraulic-core`, `feed-supply` |
-| `results-and-ui` | Interface para IFC, critérios e pressão de entrada; visualizações 2D/3D; planilhas e memorial com avisos, hipóteses e resultados por trecho. | Módulos de cálculo |
+| Módulo | Responsabilidade | Depende de | Estado atual |
+|---|---|---|---|
+| `ifc-reader` | Abrir IFC4, reconhecer unidades, elementos hidráulicos, propriedades e geometria; apontar dados ausentes ou não reconhecidos. | — | Importação e resumo disponíveis; conferência visual geral dos três modelos pendente. |
+| `network-topology` | Construir a rede a partir de relações/portas IFC e candidatos geométricos, revisar conexões antes do cálculo. | `ifc-reader` | Sugestões geométricas ficam pendentes até confirmação; decisões persistem por IFC. |
+| `hydraulic-core` | Solver comum de nós, trechos, perdas, demandas e condições de contorno, com unidades e convergência verificáveis. | `ifc-reader`, `network-topology` | Água fria e alimentação disponíveis para entradas completas; limitações de rede e dados são reportadas. |
+| `cold-water` | Definir demanda de água fria por pontos de utilização e verificar vazões/pressões na rede. | `hydraulic-core` | Implementado para dados de projeto explícitos. |
+| `hot-water` | Dimensionar distribuição e retorno hidráulico de água quente; energia do aquecedor fica fora da primeira versão. | `hydraulic-core` | Recirculação calcula vazões térmicas por alça, rateia perdas de troncos comuns, soma vazões nos tubos compartilhados e calcula altura crítica/perda de balanceamento. Exige redes de ida e retorno explícitas no IFC; nenhum dos três IFCs fornecidos marca o retorno, então eles continuam parciais nesse modo. |
+| `feed-supply` | Dimensionar a alimentação e avaliar se a pressão disponível da concessionária atende à demanda, indicando a pressão/altura faltante quando não atender. | `hydraulic-core` | Modos de alimentação direta e a reservatório disponíveis. |
+| `pump-selection` | Ler curvas dos catálogos Schneider/WDM, calcular pontos de operação e classificar candidatos com dados e critérios rastreáveis. | `hydraulic-core`, `feed-supply` | 24 opções listadas; avaliação automática tabulada somente para WDM VPI1 EEP 1.5 15. |
+| `results-and-ui` | Interface para IFC, critérios e pressão de entrada; visualizações 2D/3D; relatórios e memorial com avisos, hipóteses e resultados por trecho. | Módulos de cálculo | Exportação JSON e memorial Word disponíveis; inspeção visual geral ainda pendente. |
 
 ## Direção visual aprovada
 
@@ -39,10 +39,13 @@ As ações principais serão adaptar ao fluxo hidráulico: abrir IFC, analisar/d
 
 ## Estado atual
 
+- Build e 46 testes automatizados foram registrados como aprovados na verificação anterior. O smoke test mais recente do IFC 056-MARLUCI confirmou importação de 753 elementos e interações da interface; o cálculo foi interrompido porque a origem da rede não estava definida, portanto não comprova um cálculo hidráulico completo. Os três IFCs fornecidos não exercitam recirculação porque seus rótulos não identificam retorno. A revisão visual geral continua pendente.
+
 - Água fria e alimentação direta/reservatório calculam vazões, perdas Darcy–Weisbach, velocidade e pressão quando todas as entradas físicas obrigatórias estão explicitadas.
-- Água quente calcula apenas a distribuição; o retorno e balanceamento ainda não estão modelados, portanto o resultado fica sinalizado como parcial.
-- Uma curva publicada do sistema pressurizador WDM VPI1 EEP 1.5 15 está integrada para triagem dentro da faixa da tabela; a compatibilidade final requer revisão do fabricante.
-- A exportação disponível é um relatório JSON rastreável. Memorial PDF e seleção do catálogo completo permanecem pendentes.
+- Água quente calcula a distribuição; a recirculação também é calculada quando o IFC classifica ida/retorno e fecha as alças. O IFC 056-MARLUCI não identifica retorno e, nesse modelo, o resultado segue sinalizado como parcial.
+- Para água quente com retorno explicitamente classificado no IFC, o fluxo usa perda térmica informada por tubo (W/m), comprimento e ΔT. As alças são os encontros confirmados entre distribuição e retorno; perdas térmicas comuns são rateadas proporcionalmente às perdas exclusivas. A hidráulica usa Darcy–Weisbach. A válvula de balanceamento e a curva da circuladora ainda exigem validação/dados de fabricante.
+- O seletor lista 24 opções WDM/Rowa, mostra as curvas gráficas originais Rowa quando as imagens do catálogo estão na instalação local e avalia automaticamente apenas a WDM VPI1 EEP 1.5 15, cuja curva está tabulada. Compatibilidade final requer revisão do fabricante. Circuladoras Rowa para retorno quente aparecem com suas especificações, mas a hidráulica do retorno segue pendente.
+- A exportação inclui relatório JSON e memorial editável em Word (.docx). O catálogo disponível ainda não tem todas as curvas tabuladas.
 
 ## Ordem de construção
 

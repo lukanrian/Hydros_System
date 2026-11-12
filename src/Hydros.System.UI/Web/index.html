@@ -11,7 +11,21 @@
   <header class="topbar">
     <div class="brand"><span class="mark">⌁</span><div><strong>Hydros System</strong><small>dimensionamento hidráulico · água fria · água quente · alimentação</small></div></div>
     <div id="fileName" class="file-name">nenhum IFC selecionado</div>
-    <div class="actions"><button id="btnAbrir" class="btn">Abrir IFC</button><button class="btn primary" disabled>Analisar</button><button class="btn" disabled>Selecionar bomba</button><button class="btn primary" disabled>Gerar memorial</button><button class="btn">Arquivos ▾</button><button id="btnTheme" class="btn icon" title="Alternar tema">☾</button></div>
+    <div class="actions">
+      <button id="btnAbrir" class="btn">Abrir IFC</button>
+      <button id="btnAnalyze" class="btn primary" disabled>Analisar</button>
+      <button id="btnSelectPump" class="btn">Selecionar bomba</button>
+      <button id="btnMemorial" class="btn primary" disabled>Gerar memorial</button>
+      <details id="filesMenu" class="files-menu">
+        <summary class="btn">Arquivos ▾</summary>
+        <div class="files-actions">
+          <button class="btn" data-file-action="btnAbrir">Abrir IFC</button>
+          <button class="btn" data-file-action="btnExportReport" disabled>Exportar relatório JSON</button>
+          <button class="btn" data-file-action="btnMemorial" disabled>Salvar memorial Word</button>
+        </div>
+      </details>
+      <button id="btnTheme" class="btn icon" title="Alternar tema">☾</button>
+    </div>
   </header>
   <div class="workspace">
     <aside class="side">
@@ -24,18 +38,65 @@
           <div id="projectSummary" class="summary empty">Abra um IFC para inspecionar a rede hidráulica.</div>
           <div id="warnings"></div>
         </div>
-        <div class="tab-content" id="tab-conexoes" hidden><div id="connectionSummary" class="summary empty">Abra um IFC para procurar candidatos geométricos de conexão.</div><div id="connectionList"></div><div class="connection-pages"><button id="connectionPrev" class="btn small" disabled>Anterior</button><span id="connectionPageLabel">0 / 0</span><button id="connectionNext" class="btn small" disabled>Próxima</button></div></div>
-        <div class="tab-content" id="tab-pontos" hidden><label class="field">Temperatura de cálculo da água (°C)<input id="waterTemperature" type="number" min="0" max="100" step="any" placeholder="Informar temperatura do cenário"></label><div id="demandSummary" class="summary empty">Abra um IFC para cadastrar as demandas dos pontos.</div><button id="btnCalcFlows" class="btn primary" disabled>Calcular vazões no grafo revisado</button><button id="btnCalcPressure" class="btn" disabled>Calcular perdas e pressões</button><button id="btnExportReport" class="btn" disabled>Exportar relatório JSON</button><div id="flowResult"></div><div id="demandList"></div><div class="connection-pages"><button id="demandPrev" class="btn small" disabled>Anterior</button><span id="demandPageLabel">0 / 0</span><button id="demandNext" class="btn small" disabled>Próxima</button></div></div>
-        <div class="tab-content" id="tab-bombas" hidden><div class="summary"><strong>Curva catalogada</strong><p>VPI1 - EEP 1.5 15 · WDM · sistema com uma bomba · página impressa 19 do catálogo (página 21 do PDF).</p><p>A comparação usa interpolação linear dentro da faixa publicada e serve como triagem hidráulica; confirme aplicação, temperatura, tensão, sucção e condições de instalação no fabricante.</p></div><button id="btnCheckPump" class="btn primary" disabled>Avaliar ponto de operação</button><div id="pumpResult" class="summary empty">Calcule primeiro vazões, perdas e pressões.</div></div>
+        <div class="tab-content" id="tab-conexoes" hidden>
+          <div id="connectionSummary" class="summary empty">Abra um IFC para procurar candidatos de conexão.</div>
+          <div id="connectionBatch" class="metadata-block" hidden>
+            <button id="btnConfirmConnectionBatch" class="btn small" disabled>Confirmar ligações únicas da rede</button>
+            <button id="btnNextOpenEnd" class="btn small" disabled>Ir para a próxima ponta aberta</button>
+            <p id="connectionBatchHint" class="hint" aria-live="polite"></p>
+          </div>
+          <div id="connectionList"></div>
+          <div class="connection-pages"><button id="connectionPrev" class="btn small" disabled>Anterior</button><span id="connectionPageLabel">0 / 0</span><button id="connectionNext" class="btn small" disabled>Próxima</button></div>
+        </div>
+        <div class="tab-content" id="tab-pontos" hidden>
+          <label class="field">Temperatura de cálculo da água (°C)<input id="waterTemperature" type="number" min="0" max="100" step="any" placeholder="Informar temperatura do cenário"></label>
+          <div id="hotReturnInputs" class="metadata-block" hidden><label class="field">Queda admissível entre ida e retorno (ΔT, °C)<input id="hotDeltaT" type="number" min="0" step="any" placeholder="Informar ΔT de projeto"></label><p class="hint">A recirculação exige redes de distribuição e retorno explicitamente identificadas no IFC. Os ramais são derivados dos encontros entre ida e retorno; conexões pendentes, tubos sem perda térmica ou circuitos abertos bloqueiam o cálculo.</p></div>
+          <div id="demandSummary" class="summary empty">Abra um IFC para cadastrar as demandas dos pontos.</div>
+          <button id="btnCalcFlows" class="btn primary" disabled>Calcular vazões no grafo revisado</button><button id="btnCalcPressure" class="btn" disabled>Calcular perdas e pressões</button><button id="btnExportReport" class="btn" disabled>Exportar relatório JSON</button>
+          <details id="pipeBatch" class="metadata-block" hidden>
+            <summary>Preencher dados de tubos em lote</summary>
+            <form id="pipeBatchForm">
+              <div class="batch-filters">
+                <label class="field">Material IFC<select id="pipeBatchMaterial"></select></label>
+                <label class="field">Diâmetro interno<select id="pipeBatchDiameter"></select></label>
+              </div>
+              <p id="pipeBatchCount" class="hint" aria-live="polite"></p>
+              <div class="demand-fields">
+                <label>Rugosidade absoluta (mm)<input id="pipeBatchRoughness" type="number" min="0" step="any"></label>
+                <label>K total por tubo<input id="pipeBatchK" type="number" min="0" step="any"></label>
+                <label>Fonte dos dados do tubo<input id="pipeBatchSource" maxlength="160" required placeholder="Fabricante, ficha técnica ou medição"></label>
+              </div>
+              <p class="hint">Preenche campos vazios. Tubos com fonte diferente são preservados. Use o mesmo K apenas se ele se aplicar a cada tubo do grupo.</p>
+              <button id="btnApplyPipeBatch" class="btn small" type="submit" disabled>Preencher grupo</button>
+              <p id="pipeBatchMessage" class="hint" role="status"></p>
+            </form>
+          </details>
+          <div id="flowResult"></div><div id="demandList"></div><div class="connection-pages"><button id="demandPrev" class="btn small" disabled>Anterior</button><span id="demandPageLabel">0 / 0</span><button id="demandNext" class="btn small" disabled>Próxima</button></div>
+        </div>
+        <div class="tab-content" id="tab-bombas" hidden><div class="summary"><strong>Seleção de bombas</strong><p>Consulte modelos por sistema, fabricante e família. Modelos com curva tabulada podem ser avaliados no ponto de operação; os demais aparecem para consulta e confirmação técnica.</p></div><button class="btn" data-open-pump>Selecionar bomba</button><div id="pumpResult" class="summary empty">Calcule primeiro vazões, perdas e pressões para avaliar o ponto de operação.</div></div>
       </section>
       <section class="panel properties"><div class="panel-title"><strong>Propriedades</strong><button id="btnClear" class="btn small">Limpar seleção</button></div><div id="properties" class="summary empty">Selecione um elemento no modelo.</div></section>
     </aside>
     <main class="viewport-shell">
       <div class="tools"><button id="btnFit" class="btn">Enquadrar</button><button id="btnZoom" class="btn">Aproximar seleção</button><span class="group"><span class="muted">Vista</span><button class="btn active" data-view="3d">3D</button><button id="btnTop" class="btn" data-view="top">Topo</button></span><label class="group"><span class="muted">Colorir</span><select id="colorMode"><option value="type">Classe IFC</option><option value="system">Sistema</option></select></label><label class="group show"><span>Mostrar</span><select id="filter"><option value="all">Todos os elementos hidráulicos</option><option value="pipes">Tubos</option><option value="components">Conexões e equipamentos</option></select></label></div>
-      <div id="viewport" aria-label="Visualizador 3D do modelo IFC"><div id="emptyState">A geometria hidráulica aparece aqui depois de abrir o IFC.</div><div id="loading" hidden><div class="spinner"></div><span id="loadText">Aguardando arquivo…</span><progress id="loadProgress" max="100" value="0"></progress></div></div>
+      <div id="viewport" aria-label="Visualizador 3D do modelo IFC"><div id="emptyState">A geometria hidráulica aparece aqui depois de abrir o IFC.</div><div id="loading" hidden><div class="spinner"></div><span id="loadText">Aguardando arquivo…</span><progress id="loadProgress" max="100" value="0"></progress><button id="btnCancelImport" class="btn small">Cancelar importação</button></div></div>
       <div class="hintbar">Esquerdo: orbitar · Roda pressionada: mover · Roda: zoom no cursor · Clique: selecionar · Duplo clique: aproximar · F: enquadrar · Esc: limpar</div>
     </main>
   </div>
+  <dialog id="pumpDialog" class="pump-dialog" aria-labelledby="pumpDialogTitle">
+    <div class="pump-dialog-head"><div><h2 id="pumpDialogTitle">Selecionar bomba</h2><div class="hint">Catálogo disponível no projeto</div></div><button id="btnClosePump" class="btn icon" aria-label="Fechar">×</button></div>
+    <div class="pump-filters">
+      <label class="field">Classe<select id="pumpClass"><option value="cold">Água fria</option><option value="hot">Água quente</option><option value="feed">Alimentação</option></select></label>
+      <label class="field">Grupo<select id="pumpGroup"></select></label>
+      <label class="field">Peça<select id="pumpFamily"></select></label>
+      <label class="field">Modelo<select id="pumpModel"></select></label>
+    </div>
+    <label class="scenario-check pump-filter-check"><input id="pumpOnlyCandidates" type="checkbox"> Ocultar modelos fora da faixa ou que não atendem à triagem</label>
+    <div class="pump-dialog-body">
+      <div class="pump-list-wrap"><div id="pumpCatalogCount" class="hint"></div><div id="pumpList" class="pump-list"></div></div>
+      <section class="pump-detail"><div id="pumpModelDetails" class="summary"></div><div id="pumpCurve" class="pump-curve"></div><button id="btnCheckPump" class="btn primary">Avaliar ponto de operação</button><div id="pumpDialogResult" class="summary empty">Calcule primeiro vazões, perdas e pressões.</div></section>
+    </div>
+  </dialog>
   <footer><span id="status">Pronto.</span><button class="btn small" id="btnOutput">Saída ▴</button></footer>
   <section id="output" hidden></section>
   <script type="module" src="app.js"></script>

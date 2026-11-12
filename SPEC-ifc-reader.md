@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Importar os IFCs hidráulicos do projeto como dados rastreáveis para visualização 3D e, depois, reconstrução da rede. A visualização 3D do Dimensionador Tipo Grelha será a base a reutilizar e adaptar; o leitor deve fornecer os mesmos dados geométricos/identificadores necessários para esse fluxo, sem dimensionar tubulações nem inferir conexões por proximidade.
+Importar os IFCs hidráulicos do projeto como dados rastreáveis para visualização 3D e reconstrução revisável da rede. A visualização 3D do Dimensionador Tipo Grelha será a base a reutilizar e adaptar; o leitor fornece dados geométricos/identificadores e candidatos de conexão por geometria, sem dimensionar tubulações nem confirmar conexões inferidas automaticamente.
 
 Usuário principal: projetista de instalações prediais que abre um IFC na interface desktop e precisa saber o que foi reconhecido, o que falta e o que foi ignorado antes de analisar a rede.
 
@@ -14,11 +14,11 @@ Usuário principal: projetista de instalações prediais que abre um IFC na inte
 - Registrar `GlobalId`, classe IFC, nome, tipo, pavimento/contêiner, propriedades e classificação/rede quando explicitamente atribuída no arquivo.
 - Disponibilizar geometria/posicionamento dos produtos reconhecidos para visualização no visor 3D existente, mantendo `GlobalId`, coordenadas e fator de conversão rastreáveis.
 - Preservar seleção de elemento, foco/orbita no selecionado, enquadramento do modelo, navegação por câmera e troca de vista já presentes no Dimensionador Tipo Grelha, adaptando-os à inspeção de redes prediais.
-- Preservar relações IFC explícitas entre portas/elementos para que o módulo `network-topology` avalie-as depois.
+- Preservar relações IFC explícitas entre portas/elementos e gerar candidatos geométricos separados para revisão no módulo `network-topology`.
 - Exibir resumo de importação e avisos por elemento ou arquivo.
 - Permitir conferência visual dos rótulos e componentes IFC contra as pranchas PDF correspondentes, preservando a prancha como referência documental separada dos dados calculados.
 
-Não faz parte deste módulo: atribuir água fria/quente/alimentação quando o IFC não informa; conectar elementos por proximidade geométrica; escolher diâmetros; calcular vazão, velocidade, perda ou pressão; selecionar bombas. Essas decisões pertencem a módulos posteriores e devem permanecer visíveis/revisáveis.
+Não faz parte deste módulo: atribuir água fria/quente/alimentação quando o IFC não informa; confirmar conexões sugeridas por proximidade; escolher diâmetros; calcular vazão, velocidade, perda ou pressão; selecionar bombas. Candidatos geométricos são apenas sugestões para revisão manual em módulos posteriores.
 
 ## Base técnica e modelos-alvo
 
@@ -74,14 +74,15 @@ Valores dimensionais usados por módulos posteriores devem ser normalizados para
 
 1. Usar a classe IFC e suas relações/tipos como evidência primária.
 2. Ler a identificação de rede/sistema apenas quando existir como propriedade ou relação explícita; guardar o nome e o caminho de origem dessa informação.
-3. Não deduzir sistema por cor, nome livre isolado, diâmetro ou proximidade. Heurísticas futuras devem ser produzidas como sugestões marcadas como inferidas, fora deste leitor.
+3. Não deduzir sistema por cor, nome livre isolado, diâmetro ou proximidade. A proximidade geométrica pode sugerir pares de conexão, mas deve ser identificada como inferência e nunca tratada como relação IFC explícita ou confirmação do usuário.
 4. Não remover nem fundir elementos duplicados; reportar `GlobalId` ausente ou repetido.
 5. Não descartar silenciosamente classes não reconhecidas: contabilizá-las no resumo e torná-las inspecionáveis quando possível.
 6. Não alterar nem regravar o IFC original.
 
 ## Interface com módulos vizinhos
 
-- `network-topology` recebe os produtos, portas e relações IFC explícitas e decide conexões; qualquer conexão inferida deve permanecer identificada e revisável.
+- `network-topology` recebe os produtos, portas e relações IFC explícitas, além de candidatos geométricos identificados separadamente; conexões sugeridas exigem confirmação e permanecem revisáveis.
+- Para recirculação de água quente, preservar a classificação explícita da rede de retorno (rótulo contendo “retorno” ou “recirculação”) separada da rede de distribuição. A topologia hidráulica deriva as alças nos nós confirmados comuns às duas redes; rótulos ausentes/ambíguos ou conexões abertas devem bloquear essa etapa.
 - `hydraulic-core` recebe geometria, propriedades normalizadas e classificação confirmada, nunca dados dimensionais ambíguos como se fossem válidos.
 - `results-and-ui` apresenta barra de ações (abrir/analisar), painel lateral de projeto/elementos/bombas, viewport central, propriedades da seleção, status e saída, conforme a direção visual aprovada. O viewport deve reaproveitar/adaptar a cena WebGL, a navegação por câmera, o enquadramento, seleção/foco e carregamento de geometria do Dimensionador Tipo Grelha. O leitor fornece dados e identificadores para o viewer; não controla o layout.
 
@@ -99,7 +100,7 @@ Valores dimensionais usados por módulos posteriores devem ser normalizados para
 - O resumo reconhece contagens de segmentos, conexões, válvulas, bombas e pavimentos compatíveis com o conteúdo de cada arquivo. Contagens divergentes são explicadas e rastreáveis, nunca corrigidas por estimativa silenciosa.
 - Unidades e coordenadas são coerentes com a escala do IFC; uma geometria em mm não é interpretada como metros.
 - Propriedades ausentes, unidades desconhecidas, GlobalIds duplicados e classes não reconhecidas produzem avisos acionáveis.
-- Relações IFC explícitas são exportadas separadas de qualquer sugestão geométrica futura.
+- Relações IFC explícitas e candidatos geométricos são apresentados separadamente; nenhum candidato é confirmado sem revisão manual.
 - Arquivo malformado ou unidade ambígua gera erro claro e não substitui o modelo carregado.
 - O maior IFC pode ser lido com progresso, cancelamento e sem congelar a interface; o consumo de memória será medido no plano/implementação antes de fixar um limite numérico.
 

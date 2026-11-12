@@ -1,6 +1,8 @@
 import * as WebIFC from "./lib/web-ifc-api.js";
+import { addVolumeCandidates, buildConnectionCandidates, readIfcConnectivity } from "./ifc-connectivity.js";
 
-const typeNames = ["IFCPIPESEGMENT", "IFCPIPEFITTING", "IFCVALVE", "IFCPUMP", "IFCFLOWTERMINAL", "IFCFLOWMETER"];
+// Reservatórios e aquecedores entram como equipamentos: são onde as redes começam ou terminam.
+const typeNames = ["IFCPIPESEGMENT", "IFCPIPEFITTING", "IFCVALVE", "IFCPUMP", "IFCFLOWTERMINAL", "IFCFLOWMETER", "IFCTANK", "IFCBOILER"];
 const spatialTypes = ["IFCBUILDINGSTOREY", "IFCBUILDING", "IFCSITE"];
 let modelVersion = 0;
 
@@ -71,7 +73,7 @@ function makeEndpointReader(api, model) {
     const first = segmentPoints(curve.Segments[0]), last = segmentPoints(curve.Segments[curve.Segments.length - 1]);
     return first && last ? [first[0], last[1]] : null;
   }
-  return expressId => {
+  const read = expressId => {
     const product = api.GetLine(model, expressId, false), placementId = reference(product?.ObjectPlacement);
     const shape = api.GetLine(model, reference(product?.Representation), false);
     const origin = placementTransform(placementId, [0, 0, 0]);
@@ -98,6 +100,8 @@ function makeEndpointReader(api, model) {
     }
     return { endpoints: null, origin };
   };
+  read.placementOrigin = placementId => placementTransform(placementId, [0, 0, 0]);
+  return read;
 }
 
 self.onmessage = async ({ data }) => {
@@ -118,10 +122,10 @@ self.onmessage = async ({ data }) => {
     let bytes = new Uint8Array(received); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
     chunks.length = 0;
-    self.postMessage({ type: "status", text: "Interpretando elementos hidráulicos…", progress: 30 });
+    self.postMessage({ type: "status", text: "Interpretando elementos hidráulicos…", progress: 26 });
     const api = new WebIFC.IfcAPI(); api.SetWasmPath(new URL("./lib/", self.location.href).href); await api.Init();
     const model = api.OpenModel(bytes, { COORDINATE_TO_ORIGIN: true }); bytes = null;
-    self.postMessage({ type: "status", text: "Auditando unidades e relações IFC…", progress: 26 });
+    self.postMessage({ type: "status", text: "Auditando unidades e relações IFC…", progress: 28 });
     const schema = api.GetModelSchema(model);
     const getIds = name => { const type = api.GetTypeCodeFromName(name); return type ? api.GetLineIDsWithType(model, type) : null; };
     const readGeometryData = makeEndpointReader(api, model);
@@ -222,45 +226,25 @@ self.onmessage = async ({ data }) => {
         if (item) item.materials.push(...names);
       }
     }
-    for (const item of productMetadata.values()) if (item.systemLabel) systemCounts[item.systemLabel] = (systemCounts[item.systemLabel] ?? 0) + 1;
-    const candidates = [], searchRadius_m = 0.05, directTouch_m = 0.001, cells = new Map();
-    const cellKey = point => point.map(value => Math.floor(value / searchRadius_m)).join(":");
-    const addToCell = (record, point) => {
-      const key = cellKey(point), bucket = cells.get(key) ?? [];
-      bucket.push(record); cells.set(key, bucket);
+    // Portas e sistemas explícitos do IFC têm prioridade; a geometria só sugere o que as relações não cobrem.
+    const readPortPoint = port => {
+      const point = metresPerUnit == null ? null : readGeometryData.placementOrigin(reference(port?.ObjectPlacement));
+      return point ? multiply(point, metresPerUnit) : null;
     };
-    for (const item of productMetadata.values()) {
-      const type = item.type.toLowerCase();
-      if (type === "ifcpipesegment" && item.endpoints) item.endpoints.forEach((point, end) => addToCell({ item, end, point, kind: "pipe" }, point));
-      else if (item.origin && (type === "ifcpipefitting" || type === "ifcvalve" || type === "ifcpump" || type === "ifcflowmeter" || type.includes("terminal")))
-        addToCell({ item, end: null, point: item.origin, kind: type === "ifcpipefitting" ? "fitting" : type.includes("terminal") ? "terminal" : "device" }, item.origin);
-    }
-    const visitedCandidates = new Set(), adjacentCells = [-1, 0, 1];
-    for (const bucket of cells.values()) for (const source of bucket.filter(item => item.kind === "pipe")) {
-      const base = source.point.map(value => Math.floor(value / searchRadius_m));
-      for (const dx of adjacentCells) for (const dy of adjacentCells) for (const dz of adjacentCells) {
-        const nearby = cells.get([base[0] + dx, base[1] + dy, base[2] + dz].join(":")) ?? [];
-        for (const target of nearby) {
-          if (target === source || (target.kind === "pipe" && (target.item === source.item || source.item.expressId > target.item.expressId))) continue;
-          const keyParts = target.kind === "pipe"
-            ? [source.item.expressId, source.end, target.item.expressId, target.end]
-            : [source.item.expressId, source.end, target.item.expressId, ""];
-          const key = keyParts.join(":");
-          if (visitedCandidates.has(key)) continue;
-          visitedCandidates.add(key);
-          const distance_m = Math.hypot(...source.point.map((component, index) => component - target.point[index]));
-          if (distance_m > searchRadius_m) continue;
-          candidates.push({ key, from: { id: source.item.globalId, expressId: source.item.expressId, type: source.item.type, end: source.end, system: source.item.systemLabel }, to: { id: target.item.globalId, expressId: target.item.expressId, type: target.item.type, end: target.end, system: target.item.systemLabel }, distance_m, evidence: distance_m <= directTouch_m ? "Extremidades em contato geométrico" : target.kind === "fitting" ? "Extremidade próxima à origem da conexão" : target.kind === "terminal" ? "Extremidade próxima à origem do terminal" : target.kind === "device" ? "Extremidade próxima à origem do equipamento" : "Extremidades próximas", decision: "Pendente" });
-        }
-      }
-    }
-    candidates.sort((a, b) => a.distance_m - b.distance_m);
+    const connectivity = readIfcConnectivity(api, model, productMetadata, readPortPoint);
+    for (const item of productMetadata.values()) if (item.systemLabel) systemCounts[item.systemLabel] = (systemCounts[item.systemLabel] ?? 0) + 1;
+    const { candidates, unresolvedRelations } = buildConnectionCandidates(productMetadata, connectivity);
     const types = metadataTypes;
     if (!types.length) throw new Error("O leitor IFC não reconheceu as classes hidráulicas do arquivo.");
     const counts = Object.fromEntries(typeNames.map(name => [name, 0]));
-    const total = types.reduce((sum, type) => sum + api.GetLineIDsWithType(model, type).size(), 0);
+    for (const item of productMetadata.values()) {
+      const type = item.type.toUpperCase();
+      counts[type] = (counts[type] ?? 0) + 1;
+    }
+    const total = productMetadata.size;
     self.postMessage({ type: "status", text: "Convertendo geometria IFC…", progress: 38 });
     let batch = [], processed = 0, sent = 0;
+    const boxes = new Map();
     const flush = () => {
       if (!batch.length) return;
       const transfer = [];
@@ -274,25 +258,36 @@ self.onmessage = async ({ data }) => {
       const line = metadata ?? api.GetLine(model, flat.expressID);
       const globalId = metadata?.globalId ?? line?.GlobalId?.value ?? line?.GlobalId;
       const ifcType = api.GetNameFromTypeCode(api.GetLineType(model, flat.expressID));
-      counts[ifcType?.toUpperCase() ?? "UNKNOWN"] = (counts[ifcType?.toUpperCase() ?? "UNKNOWN"] ?? 0) + 1;
       const parts = [];
       for (let i = 0; i < flat.geometries.size(); i++) {
         const placed = flat.geometries.get(i), geometry = api.GetGeometry(model, placed.geometryExpressID);
         const raw = api.GetVertexArray(geometry.GetVertexData(), geometry.GetVertexDataSize());
         const vertices = new Float32Array(raw.length / 2), normals = new Float32Array(raw.length / 2);
-        for (let k = 0, j = 0; k < raw.length; k += 6, j += 3) { vertices[j] = raw[k]; vertices[j + 1] = raw[k + 1]; vertices[j + 2] = raw[k + 2]; normals[j] = raw[k + 3]; normals[j + 1] = raw[k + 4]; normals[j + 2] = raw[k + 5]; }
+        // Caixa envolvente no referencial do visor (Z para cima, como no IFC), usada para achar pontas dentro das peças.
+        const box = metadata ? boxes.get(flat.expressID) ?? [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity] : null, m = placed.flatTransformation;
+        for (let k = 0, j = 0; k < raw.length; k += 6, j += 3) {
+          const x = raw[k], y = raw[k + 1], z = raw[k + 2];
+          vertices[j] = x; vertices[j + 1] = y; vertices[j + 2] = z; normals[j] = raw[k + 3]; normals[j + 1] = raw[k + 4]; normals[j + 2] = raw[k + 5];
+          if (!box) continue;
+          const wx = m[0] * x + m[4] * y + m[8] * z + m[12], wy = m[1] * x + m[5] * y + m[9] * z + m[13], wz = m[2] * x + m[6] * y + m[10] * z + m[14];
+          if (wx < box[0]) box[0] = wx; if (wx > box[3]) box[3] = wx;
+          if (-wz < box[1]) box[1] = -wz; if (-wz > box[4]) box[4] = -wz;
+          if (wy < box[2]) box[2] = wy; if (wy > box[5]) box[5] = wy;
+        }
+        if (box && raw.length) boxes.set(flat.expressID, box);
         const indices = new Uint32Array(api.GetIndexArray(geometry.GetIndexData(), geometry.GetIndexDataSize()));
         geometry.delete();
-        parts.push({ vertices: vertices.buffer, normals: normals.buffer, indices: indices.buffer, transform: Array.from(placed.flatTransformation) });
+        if (vertices.length && indices.length) parts.push({ vertices: vertices.buffer, normals: normals.buffer, indices: indices.buffer, transform: Array.from(placed.flatTransformation) });
       }
       const itemMetadata = metadata ?? { storey: null, systemLabel: null, systemSource: null, properties: [], endpoints: null };
-      if (parts.length) batch.push({ id: globalId ?? null, expressId: flat.expressID, type: ifcType, name: metadata?.name ?? line?.Name?.value ?? line?.Name ?? "", storey: itemMetadata.storey, systemLabel: itemMetadata.systemLabel, systemSource: itemMetadata.systemSource, materials: itemMetadata.materials ?? [], properties: itemMetadata.properties, endpoints: itemMetadata.endpoints, parts });
+      if (parts.length) batch.push({ id: globalId ?? null, expressId: flat.expressID, type: ifcType, name: metadata?.name ?? line?.Name?.value ?? line?.Name ?? "", storey: itemMetadata.storey, systemLabel: itemMetadata.systemLabel, systemLabels: itemMetadata.systemLabels ?? [], systemSource: itemMetadata.systemSource, materials: itemMetadata.materials ?? [], properties: itemMetadata.properties, endpoints: itemMetadata.endpoints, parts });
       if (batch.length >= 40) flush();
       if (processed % 250 === 0) self.postMessage({ type: "status", text: `Convertendo geometria IFC… ${processed.toLocaleString("pt-BR")} elementos`, progress: 38 + Math.min(58, Math.round(processed / Math.max(total, 1) * 58)) });
     });
     flush();
-    const explicitSystems = getIds("IFCSYSTEM")?.size() ?? 0;
-    const portRelations = getIds("IFCRELCONNECTSPORTS")?.size() ?? 0;
+    const volume = addVolumeCandidates(productMetadata, candidates, boxes);
+    const explicitSystems = connectivity.systemCount;
+    const portRelations = connectivity.relations.length, portCandidates = candidates.filter(candidate => candidate.source === "ifc-ports").length;
     api.CloseModel(model);
     if (!sent) throw new Error("Nenhum elemento hidráulico com geometria foi encontrado no IFC.");
     const units = unitAssignment?.Units?.map(unit => ({ type: value(unit.UnitType), name: unitName(api, unit), expressType: api.GetNameFromTypeCode(unit.type) })) ?? [];
@@ -316,14 +311,16 @@ self.onmessage = async ({ data }) => {
     if (missingLength) warnings.push(missingLength + " tubo(s) sem comprimento explícito normalizado em metros; a geometria não será usada como comprimento hidráulico sem revisão.");
     const pipeCount = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcpipesegment").length;
     const withoutEndpoints = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcpipesegment" && !item.endpoints).length;
-    if (withoutEndpoints) warnings.push(withoutEndpoints + " de " + pipeCount + " tubos sem endpoints extraíveis das representações suportadas (IfcExtrudedAreaSolid/IfcSweptDiskSolid); fora da lista de candidatos.");
+    if (withoutEndpoints) warnings.push(withoutEndpoints + " de " + pipeCount + " tubos sem endpoints extraíveis das representações suportadas (IfcExtrudedAreaSolid/IfcSweptDiskSolid) nem de duas portas IFC posicionadas; fora da lista de candidatos.");
     if (!explicitSystems && !Object.keys(systemCounts).length) warnings.push("Nenhuma entidade IfcSystem ou propriedade de rede explícita foi encontrada; a classificação permanece não identificada.");
     if (!portRelations) warnings.push("Nenhuma relação IfcRelConnectsPorts foi encontrada; conexões por geometria serão apenas candidatas revisáveis.");
+    if (unresolvedRelations) warnings.push(unresolvedRelations + " relação(ões) IfcRelConnectsPorts não puderam ser associadas a uma extremidade de tubo reconhecida; essas ligações dependem da revisão geométrica.");
     if (metresPerUnit == null) warnings.push("Unidade não suportada: candidatos de conexão não foram gerados.");
-    const withoutGeometry = Math.max(0, Object.values(counts).reduce((sum, count) => sum + count, 0) - sent);
+    else if (!volume.calibrated && volume.pipes) warnings.push("A posição das malhas não pôde ser conferida contra os eixos dos tubos (" + volume.consistent + " de " + volume.pipes + " coerentes); pontas sem candidato não foram procuradas dentro do volume das peças.");
+    const withoutGeometry = Math.max(0, total - sent);
     if (withoutGeometry) warnings.push(withoutGeometry + " elemento(s) hidráulico(s) reconhecido(s) não possuem geometria exibível.");
-    const terminals = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcsanitaryterminal").map(({ expressId, globalId, name, type, storey, systemLabel }) => ({ expressId, globalId, name, type, storey, systemLabel }));
-    self.postMessage({ type: "done", counts, elements: sent, schema, projectName: value(project?.Name), units, metresPerUnit, storeys: storeyCounts, systemCounts, warnings, missingGlobalIds, duplicateGlobalIds, explicitSystems, portRelations, pipeCount, pipesWithEndpoints: pipeCount - withoutEndpoints, pipesMissingInternalDiameter: missingInternalDiameter, pipesMissingLength: missingLength, candidates, terminals });
+    const terminals = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcsanitaryterminal").map(({ expressId, globalId, name, type, storey, systemLabel, systemLabels }) => ({ expressId, globalId, name, type, storey, systemLabel, systemLabels: systemLabels ?? [] }));
+    self.postMessage({ type: "done", counts, elements: sent, schema, projectName: value(project?.Name), units, metresPerUnit, storeys: storeyCounts, systemCounts, warnings, missingGlobalIds, duplicateGlobalIds, explicitSystems, portRelations, portCandidates, volumeCandidates: volume.added, pipeCount, pipesWithEndpoints: pipeCount - withoutEndpoints, pipesMissingInternalDiameter: missingInternalDiameter, pipesMissingLength: missingLength, candidates, terminals });
   } catch (error) {
     self.postMessage({ type: "error", text: error?.message ?? String(error) });
   }
