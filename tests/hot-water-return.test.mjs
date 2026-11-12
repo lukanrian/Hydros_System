@@ -65,3 +65,12 @@ test("bloqueia conexão pendente e rede de retorno sem ligação até o aquecedo
   noReturnToBoiler.decisions["return-boiler-end"] = "Rejeitada";
   assert.match(calculateHotWaterReturn(noReturnToBoiler).error, /árvore contínua.*retorno|retorno.*aquecedor/i);
 });
+
+test("interligação ida/retorno fora do alcance do aquecedor é apontada como retorno solto", () => {
+  const isolated = args();
+  isolated.records.push(pipe(7, hot, 3), pipe(8, returned, 3));
+  isolated.candidates.push(link("isolated-junction-a", 7, 1, part(110)), link("isolated-junction-b", 8, 0, part(110)));
+  for (const key of ["isolated-junction-a", "isolated-junction-b"]) isolated.decisions[key] = "Confirmada";
+  for (const id of [7, 8]) isolated.pipeInputs.set(id, input(3));
+  assert.match(calculateHotWaterReturn(isolated).error, /retorno no IFC fora de qualquer alça/);
+});

@@ -25,6 +25,12 @@ function path(graph, source, target) {
   return null;
 }
 
+function reachable(graph, source) {
+  const seen = new Set(graph.has(source) ? [source] : []), stack = [...seen];
+  while (stack.length) for (const { node } of graph.get(stack.pop()) ?? []) if (!seen.has(node)) { seen.add(node); stack.push(node); }
+  return seen;
+}
+
 function connectedTree(graph, source) {
   if (!graph.has(source)) return false;
   const seen = new Set([source]), stack = [source];
@@ -76,7 +82,8 @@ export function calculateHotWaterReturn({ records, candidates, decisions, bounda
   for (const kind of ["supply", "return"]) {
     if (!connectedTree(graphs[kind], source)) return error(`As conexões confirmadas do IFC não formam uma árvore contínua de ${kind === "supply" ? "distribuição" : "retorno"} até o aquecedor.`);
   }
-  const junctions = [...graphs.supply.keys()].filter(node => node !== source && graphs.return.has(node));
+  const supplyReach = reachable(graphs.supply, source), returnReach = reachable(graphs.return, source);
+  const junctions = [...supplyReach].filter(node => node !== source && returnReach.has(node));
   if (!junctions.length) return error("Nenhum ramal de recirculação foi identificado: o IFC precisa ligar a distribuição ao retorno em cada alça.");
   const branches = junctions.map((node, index) => {
     const supplyPipeIds = path(graphs.supply, source, node), returnPipeIds = path(graphs.return, node, source);

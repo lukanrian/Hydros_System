@@ -163,7 +163,7 @@ function showProperties(item) {
   const materials = item.materials?.length ? escapeHtml([...new Set(item.materials)].join(", ")) + " · IfcRelAssociatesMaterial" : "não informado por relação de material IFC";
   const calculatedFlow = flowResults.get(item.expressId);
   const hydraulic = hydraulicResults?.pipes?.[item.expressId], flowRow = calculatedFlow == null ? "" : "<dt>Vazão neste cenário</dt><dd>" + calculatedFlow.toLocaleString("pt-BR", { maximumFractionDigits: 4 }) + " L/s · soma a jusante</dd>";
-  const hydraulicRow = hydraulic ? "<dt>Velocidade</dt><dd>" + hydraulic.velocity.toLocaleString("pt-BR", { maximumFractionDigits: 3 }) + " m/s</dd><dt>Perda total</dt><dd>" + hydraulic.totalLossM.toLocaleString("pt-BR", { maximumFractionDigits: 3 }) + " m.c.a.</dd><dt>Pressão no nó jusante</dt><dd>" + hydraulic.downstreamPressureMca.toLocaleString("pt-BR", { maximumFractionDigits: 3 }) + " m.c.a.</dd>" : "";
+  const hydraulicRow = hydraulic ? "<dt>Velocidade</dt><dd>" + hydraulic.velocity.toLocaleString("pt-BR", { maximumFractionDigits: 3 }) + " m/s</dd><dt>Perda total</dt><dd>" + hydraulic.totalLossM.toLocaleString("pt-BR", { maximumFractionDigits: 3 }) + " m de coluna do fluido</dd><dt>Pressão no nó jusante</dt><dd>" + hydraulic.downstreamPressureMca.toLocaleString("pt-BR", { maximumFractionDigits: 3 }) + " m.c.a.</dd>" : "";
   const pipeInput = item.kind === "pipe" ? (() => {
     const saved = pipeHydraulicInput(item), diameter = saved.diameterMm, length = saved.lengthM;
     const connected = connectedPipeEnds(), closed = closedEndKeys(), coordinate = value => value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
@@ -236,17 +236,22 @@ function updateBoundaryFields() {
   const selectedItem = batches.flatMap(batch => batch.records).find(item => item.expressId === selected);
   $("btnSetTankEnd").disabled = !selectedItem || selectedItem.kind !== "pipe" || system !== "feed" || $("destination").value !== "tank";
 }
+// O armazenamento local do WebView2 tem cota; em modelos grandes uma falha de gravação perderia trabalho em silêncio.
+function storageFailed(what) {
+  const message = "Não foi possível salvar " + what + " neste computador (armazenamento local cheio ou indisponível). Exporte o relatório JSON antes de fechar o programa.";
+  status(message); log(message);
+}
 function saveProjectInputs() {
   if (!activeFileKey) return;
   projectInputs = { ...projectInputs, system: $("system").value, utilityPressure: $("utilityPressure").value, utilityFlowLps: $("utilityFlowLps").value, utilityPressureMax: $("utilityPressureMax").value, destination: $("destination").value, dailyVolumeL: $("dailyVolumeL").value, refillHours: $("refillHours").value, tankBuildingType: $("tankBuildingType").value, waterTemperature: $("waterTemperature").value, hotDeltaT: $("hotDeltaT").value };
   const boundary = projectInputs.boundaries?.[projectInputs.system];
   if (boundary) { boundary.headM = $("sourceHead").value; boundary.staticHeadM = $("sourceStaticHead").value; boundary.elevationM = $("sourceElevation").value; }
   try { localStorage.setItem("hydros:inputs:" + activeFileKey, JSON.stringify(projectInputs)); }
-  catch { log("Não foi possível salvar as entradas locais deste projeto."); }
+  catch { storageFailed("as entradas deste projeto"); }
 }
 function saveReviewDecisions() {
   try { localStorage.setItem("hydros:reviews:" + activeFileKey, JSON.stringify(reviewDecisions)); }
-  catch { log("Não foi possível salvar as decisões locais de revisão."); }
+  catch { storageFailed("as decisões de revisão de conexões"); }
 }
 function renderConnectionReview() {
   const counts = { Confirmada: 0, Rejeitada: 0, Pendente: 0 };
@@ -354,11 +359,13 @@ function evaluateCatalogPump(pump = pumpCatalog.find(item => item.id === selecte
   const requiredPressureMca = Math.max(networkDeficit, terminalDeficit);
   if (requiredPressureMca === 0) return { noPumpRequired: true, requiredHeadM: 0 };
   const requiredHeadM = requiredPressureMca / (hydraulicResults.mcaPerMetre ?? 1);
+  // Sem consumo a bomba entrega a altura de shutoff (vazão nula): é essa altura que soma na pressão estática dos pontos.
   const qM3h = flowCalculation.totalLps * 3.6, curve = pump, evaluated = evaluatePump(curve, qM3h, requiredHeadM), staticLimit = 400 / 9.80665;
+  const shutoffPressureMca = Math.max(...curve.points.map(point => point[1])) * (hydraulicResults.mcaPerMetre ?? 1);
   if (evaluated.error) return { ...evaluated, curve };
-  const staticSafe = hydraulicResults.terminals.every(terminal => terminal.staticPressure + requiredPressureMca <= staticLimit) && (!hydraulicResults.destination || hydraulicResults.destination.staticPressure + requiredPressureMca <= staticLimit);
+  const staticSafe = hydraulicResults.terminals.every(terminal => terminal.staticPressure + shutoffPressureMca <= staticLimit) && (!hydraulicResults.destination || hydraulicResults.destination.staticPressure + shutoffPressureMca <= staticLimit);
   const velocitySafe = !hydraulicResults.failures.some(value => value.includes("velocidade acima"));
-  return { ...evaluated, curve, staticSafe, velocitySafe, candidate: evaluated.fitsHead && staticSafe && velocitySafe, requiredHeadM, requiredPressureMca, staticLimit, reason: !evaluated.fitsHead ? "A curva não cobre a carga necessária." : !staticSafe ? "A carga adicional elevaria a pressão estática acima do limite verificado." : !velocitySafe ? "A rede excede o alerta de velocidade; corrija antes da seleção." : "Ponto coberto na triagem hidráulica; confirme instalação e dados de catálogo com o fabricante." };
+  return { ...evaluated, curve, staticSafe, velocitySafe, candidate: evaluated.fitsHead && staticSafe && velocitySafe, requiredHeadM, requiredPressureMca, shutoffPressureMca, staticLimit, reason: !evaluated.fitsHead ? "A curva não cobre a carga necessária." : !staticSafe ? "Com vazão nula, a altura de shutoff da bomba elevaria a pressão estática acima de 400 kPa." : !velocitySafe ? "A rede excede o alerta de velocidade; corrija antes da seleção." : "Ponto coberto na triagem hidráulica; confirme instalação e dados de catálogo com o fabricante." };
 }
 function pumpStatus(pump, category) {
   const result = evaluateCatalogPump(pump, category);
@@ -442,7 +449,7 @@ function exportCalculationReport() {
       } : null,
       waterTemperatureC: hydraulicResults.temperature,
       hotReturn: system === "hot" ? { deltaTC: hydraulicResults.hotReturn?.deltaTC ?? Number($("hotDeltaT").value),
-        pipeThermalLoss: Object.fromEntries(Object.entries(projectInputs.pipeHydraulics ?? {}).filter(([, input]) => input.thermalLossWm != null)
+        pipeThermalLoss: Object.fromEntries(Object.entries(projectInputs.pipeHydraulics ?? {}).filter(([, input]) => String(input.thermalLossWm ?? "").trim() !== "")
           .map(([id, input]) => [id, { thermalLossWm: Number(input.thermalLossWm), lengthM: Number(input.lengthM), source: input.thermalSource }])) } : null,
       elevationReference: {
         sourceIfcElevationM: hydraulicResults.sourceIfcElevationM,
@@ -751,6 +758,7 @@ $("demandPrev").onclick = () => { demandPage = Math.max(0, demandPage - 1); rend
 $("demandNext").onclick = () => { demandPage++; renderDemandInputs(); };
 $("demandList").onchange = event => {
   const input = event.target.closest("input[data-demand]"); if (!input) return;
+  if (input.validity.badInput) { input.reportValidity(); return; }
   const id = Number(input.dataset.expressId), field = input.dataset.demand, system = $("system").value;
   const item = terminals.find(terminal => terminal.expressId === id);
   if (!item) return;

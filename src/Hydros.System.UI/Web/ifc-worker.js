@@ -300,7 +300,7 @@ self.onmessage = async ({ data }) => {
     const withoutProperties = [...productMetadata.values()].filter(item => !item.properties.length).length;
     if (withoutProperties) warnings.push(`${withoutProperties} elemento(s) hidráulico(s) sem property sets anexados.`);
     const withoutSystem = [...productMetadata.values()].filter(item => !item.systemLabel).length;
-    if (withoutSystem) warnings.push(withoutSystem + " elemento(s) hidráulico(s) sem a propriedade explícita Identificação_Elemento.Rede.");
+    if (withoutSystem) warnings.push(withoutSystem + " elemento(s) hidráulico(s) sem rede explícita (IfcSystem/IfcDistributionSystem ou Identificação_Elemento.Rede).");
     const withoutMaterial = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcpipesegment" && !item.materials.length && !item.properties.some(property => property.name === "Material" && property.value != null)).length;
     if (withoutMaterial) warnings.push(withoutMaterial + " tubo(s) sem material explícito no IFC; a rugosidade não será presumida.");
     const pipes = [...productMetadata.values()].filter(item => item.type.toLowerCase() === "ifcpipesegment");
